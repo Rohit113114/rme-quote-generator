@@ -3,12 +3,45 @@ import pandas as pd
 from openpyxl import load_workbook
 from datetime import datetime
 from io import BytesIO
+from pyluach import dates
+
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 
+
 st.title("RME Quote Generator")
+
+
+def generate_hebrew_quote_number():
+    today = dates.GregorianDate.today()
+    hebrew_date = today.to_heb()
+
+    month_codes = {
+        1: "NS",   # Nisan
+        2: "IY",   # Iyyar
+        3: "SV",   # Sivan
+        4: "TM",   # Tammuz
+        5: "AV",   # Av
+        6: "EL",   # Elul
+        7: "TS",   # Tishrei
+        8: "CH",   # Cheshvan
+        9: "KS",   # Kislev
+        10: "TV",  # Tevet
+        11: "SH",  # Shevat
+        12: "AD",  # Adar
+        13: "A2"   # Adar II
+    }
+
+    return f"{hebrew_date.day:02d}{month_codes[hebrew_date.month]}{hebrew_date.year}"
+
+
+def format_date(date_value):
+    if date_value is None:
+        return ""
+    return date_value.strftime("%d/%m/%Y")
+
 
 customers_db = pd.read_excel("customers.xlsx")
 customers_db.columns = customers_db.columns.str.strip()
@@ -16,8 +49,48 @@ customers_db.columns = customers_db.columns.str.strip()
 if "quote_history" not in st.session_state:
     st.session_state.quote_history = []
 
-quote_number = st.text_input("Quote Number")
+
+st.subheader("Quote Details")
+
+auto_quote_number = generate_hebrew_quote_number()
+
+quote_number = st.text_input(
+    "Quote Number",
+    value=auto_quote_number
+)
+
 revision = st.text_input("Revision", "0")
+
+
+st.subheader("Internal Workflow Tracking")
+
+job_status = st.selectbox(
+    "Job Status",
+    [
+        "Draft",
+        "Released",
+        "PO Received",
+        "Items Delivered",
+        "Invoice Sent",
+        "Paid",
+        "Completed",
+        "Closed"
+    ]
+)
+
+po_number = st.text_input("PO Number")
+invoice_number = st.text_input("Invoice Number")
+
+quote_released_date = st.date_input("Date Quote Released", value=None)
+po_received_date = st.date_input("Date PO Received", value=None)
+item_delivered_date = st.date_input("Date Item Delivered", value=None)
+invoice_sent_date = st.date_input("Date Invoice Sent", value=None)
+invoice_due_date = st.date_input("Invoice Due Date", value=None)
+invoice_paid_date = st.date_input("Date Invoice Paid", value=None)
+job_completed_date = st.date_input("Date Job Completed", value=None)
+
+
+st.subheader("Customer Details")
 
 selected_customer = st.selectbox(
     "Customer Contact",
@@ -33,14 +106,15 @@ company = customer_row["Company"]
 address = customer_row["Address"]
 city_state = customer_row["City/State"]
 
-st.subheader("Customer Details")
 st.write(f"Name: {selected_customer}")
 st.write(f"Department: {department}")
 st.write(f"Company: {company}")
 st.write(f"Address: {address}")
 st.write(f"City/State: {city_state}")
 
+
 scope = st.text_area("Scope of Work")
+
 
 st.subheader("Items")
 
@@ -55,20 +129,20 @@ items = []
 
 for i in range(item_count):
 
-    st.markdown(f"### Item {i+1}")
+    st.markdown(f"### Item {i + 1}")
 
-    part_no = st.text_input(f"Part Number {i+1}", key=f"part{i}")
-    description = st.text_input(f"Description {i+1}", key=f"desc{i}")
+    part_no = st.text_input(f"Part Number {i + 1}", key=f"part{i}")
+    description = st.text_input(f"Description {i + 1}", key=f"desc{i}")
 
     qty = st.number_input(
-        f"Qty {i+1}",
+        f"Qty {i + 1}",
         min_value=0,
         value=0,
         key=f"qty{i}"
     )
 
     unit_price = st.number_input(
-        f"Unit Price {i+1}",
+        f"Unit Price {i + 1}",
         min_value=0.0,
         value=0.0,
         key=f"price{i}"
@@ -85,6 +159,7 @@ for i in range(item_count):
             "total": total
         })
 
+
 subtotal = sum(item["total"] for item in items)
 gst = subtotal * 0.10
 grand_total = subtotal + gst
@@ -93,6 +168,7 @@ st.subheader("Totals")
 st.write(f"Subtotal: ${subtotal:,.2f}")
 st.write(f"GST: ${gst:,.2f}")
 st.write(f"Grand Total: ${grand_total:,.2f}")
+
 
 def create_excel_quote():
     wb = load_workbook("rme_excel_template.xlsx")
@@ -138,6 +214,7 @@ def create_excel_quote():
 
     return excel_buffer
 
+
 def create_pdf_quote():
     pdf_buffer = BytesIO()
 
@@ -154,7 +231,10 @@ def create_pdf_quote():
     elements = []
 
     elements.append(Paragraph("Rail and Marine Engineering Pty Ltd", styles["Title"]))
-    elements.append(Paragraph("ACN 656374373 | ABN 82656374373 | Bibra Lake, Western Australia", styles["Normal"]))
+    elements.append(Paragraph(
+        "ACN 656374373 | ABN 82656374373 | Bibra Lake, Western Australia",
+        styles["Normal"]
+    ))
     elements.append(Spacer(1, 12))
 
     elements.append(Paragraph(f"Quotation: {quote_number} Rev {revision}", styles["Heading2"]))
@@ -206,12 +286,16 @@ def create_pdf_quote():
     elements.append(Spacer(1, 20))
 
     elements.append(Paragraph("Contact Details", styles["Heading3"]))
-    elements.append(Paragraph("Rohit Saini | Mechanical Engineer | +610481247284 | rohit@rmerail.com", styles["Normal"]))
+    elements.append(Paragraph(
+        "Rohit Saini | Mechanical Engineer | +610481247284 | rohit@rmerail.com",
+        styles["Normal"]
+    ))
 
     doc.build(elements)
 
     pdf_buffer.seek(0)
     return pdf_buffer
+
 
 if st.button("Generate Quote"):
 
@@ -219,10 +303,22 @@ if st.button("Generate Quote"):
     pdf_file = create_pdf_quote()
 
     history_row = {
-        "Date": datetime.today().strftime("%d/%m/%Y"),
+        "Created Date": datetime.today().strftime("%d/%m/%Y"),
         "Quote Number": quote_number,
+        "Revision": revision,
         "Customer": selected_customer,
+        "Department": department,
         "Company": company,
+        "Job Status": job_status,
+        "PO Number": po_number,
+        "Invoice Number": invoice_number,
+        "Quote Released Date": format_date(quote_released_date),
+        "PO Received Date": format_date(po_received_date),
+        "Item Delivered Date": format_date(item_delivered_date),
+        "Invoice Sent Date": format_date(invoice_sent_date),
+        "Invoice Due Date": format_date(invoice_due_date),
+        "Invoice Paid Date": format_date(invoice_paid_date),
+        "Job Completed Date": format_date(job_completed_date),
         "Subtotal": subtotal,
         "GST": gst,
         "Total": grand_total
@@ -246,10 +342,12 @@ if st.button("Generate Quote"):
         mime="application/pdf"
     )
 
+
 st.subheader("Quote History")
 
 if st.session_state.quote_history:
     history_df = pd.DataFrame(st.session_state.quote_history)
+
     st.dataframe(history_df)
 
     csv_data = history_df.to_csv(index=False).encode("utf-8")
