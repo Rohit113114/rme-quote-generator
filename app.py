@@ -1,11 +1,13 @@
 import streamlit as st
 import pandas as pd
 from openpyxl import load_workbook
-from datetime import datetime
+from datetime import datetime, date
 from io import BytesIO
 from pyluach import dates
 import gspread
 from google.oauth2.service_account import Credentials
+import smtplib
+from email.message import EmailMessage
 
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -13,6 +15,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 
 
+st.set_page_config(page_title="RME Commercial Dashboard", layout="wide")
 st.title("RME Commercial Dashboard")
 
 
@@ -37,6 +40,44 @@ REGISTER_HEADERS = [
     "GST",
     "Total"
 ]
+
+
+STATUS_OPTIONS = [
+    "Draft",
+    "Released",
+    "PO Received",
+    "Items Delivered",
+    "Invoice Sent",
+    "Paid",
+    "Completed",
+    "Closed"
+]
+
+
+def check_login():
+    if "app_password" not in st.secrets:
+        return True
+
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+
+    if st.session_state.logged_in:
+        return True
+
+    password = st.text_input("Enter password", type="password")
+
+    if st.button("Login"):
+        if password == st.secrets["app_password"]:
+            st.session_state.logged_in = True
+            st.rerun()
+        else:
+            st.error("Incorrect password")
+
+    return False
+
+
+if not check_login():
+    st.stop()
 
 
 def generate_hebrew_quote_number():
@@ -68,6 +109,15 @@ def format_date(date_value):
     return date_value.strftime("%d/%m/%Y")
 
 
+def parse_date(value):
+    try:
+        if value is None or str(value).strip() == "":
+            return None
+        return datetime.strptime(str(value), "%d/%m/%Y").date()
+    except Exception:
+        return None
+
+
 def connect_google_sheet():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -95,7 +145,7 @@ def get_register_dataframe():
     return pd.DataFrame(columns=REGISTER_HEADERS)
 
 
-def update_register_row(quote_number, update_values):
+def update_register_row(quote_number, revision, update_values):
     sheet = connect_google_sheet()
     all_values = sheet.get_all_values()
 
@@ -103,12 +153,17 @@ def update_register_row(quote_number, update_values):
         return False
 
     headers = all_values[0]
+
     quote_col_index = headers.index("Quote Number") + 1
+    revision_col_index = headers.index("Revision") + 1
 
     row_to_update = None
 
     for row_number, row in enumerate(all_values[1:], start=2):
-        if len(row) >= quote_col_index and row[quote_col_index - 1] == quote_number:
+        quote_match = len(row) >= quote_col_index and str(row[quote_col_index - 1]) == str(quote_number)
+        revision_match = len(row) >= revision_col_index and str(row[revision_col_index - 1]) == str(revision)
+
+        if quote_match and revision_match:
             row_to_update = row_number
             break
 
@@ -121,6 +176,34 @@ def update_register_row(quote_number, update_values):
             sheet.update_cell(row_to_update, col_index, value)
 
     return True
+
+
+def send_email_with_pdf(to_email, subject, body, pdf_file, pdf_filename):
+    if "smtp" not in st.secrets:
+        raise Exception("SMTP email settings are not configured in Streamlit Secrets.")
+
+    smtp_host = st.secrets["smtp"]["host"]
+    smtp_port = int(st.secrets["smtp"]["port"])
+    smtp_user = st.secrets["smtp"]["username"]
+    smtp_password = st.secrets["smtp"]["password"]
+    from_email = st.secrets["smtp"]["from_email"]
+
+    msg = EmailMessage()
+    msg["From"] = from_email
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    msg.add_attachment(
+        pdf_file.getvalue(),
+        maintype="application",
+        subtype="pdf",
+        filename=pdf_filename
+    )
+
+    with smtplib.SMTP_SSL(smtp_host, smtp_port) as smtp:
+        smtp.login(smtp_user, smtp_password)
+        smtp.send_message(msg)
 
 
 customers_db = pd.read_excel("customers.xlsx")
@@ -148,55 +231,78 @@ with tab_dashboard:
             st.write("No quote data available.")
 
         else:
+            dashboard_df["Total"] = pd.to_numeric(dashboard_df["Total"], errors="coerce").fillna(0)
+
             total_quotes = len(dashboard_df)
+            total_revenue = dashboard_df["Total"].sum()
 
-            total_revenue = pd.to_numeric(
-                dashboard_df["Total"],
-                errors="coerce"
-            ).fillna(0).sum()
+            paid_jobs = len(dashboard_df[dashboard_df["Job Status"] == "Paid"])
+            po_received = len(dashboard_df[dashboard_df["Job Status"] == "PO Received"])
+            invoice_sent = len(dashboard_df[dashboard_df["Job Status"] == "Invoice Sent"])
 
-            paid_jobs = len(
-                dashboard_df[
-                    dashboard_df["Job Status"] == "Paid"
-                ]
-            )
+            today_date = date.today()
 
-            po_received = len(
-                dashboard_df[
-                    dashboard_df["Job Status"] == "PO Received"
-                ]
-            )
+            dashboard_df["Parsed Due Date"] = dashboard_df["Invoice Due Date"].apply(parse_date)
+            dashboard_df["Paid Blank"] = dashboard_df["Invoice Paid Date"].astype(str).str.strip() == ""
 
-            invoice_sent = len(
-                dashboard_df[
-                    dashboard_df["Job Status"] == "Invoice Sent"
-                ]
-            )
+            overdue_df = dashboard_df[
+                (dashboard_df["Parsed Due Date"].notna()) &
+                (dashboard_df["Parsed Due Date"] < today_date) &
+                (dashboard_df["Paid Blank"])
+            ]
 
-            outstanding_invoices = len(
-                dashboard_df[
-                    dashboard_df["Invoice Paid Date"].astype(str).str.strip() == ""
-                ]
-            )
+            overdue_invoices = len(overdue_df)
 
             col1, col2, col3 = st.columns(3)
-
             col1.metric("Total Quotes", total_quotes)
             col2.metric("Total Revenue", f"${total_revenue:,.2f}")
             col3.metric("Paid Jobs", paid_jobs)
 
             col4, col5, col6 = st.columns(3)
-
             col4.metric("PO Received", po_received)
             col5.metric("Invoices Sent", invoice_sent)
-            col6.metric("Outstanding Invoices", outstanding_invoices)
+            col6.metric("Overdue Invoices", overdue_invoices)
 
-            st.subheader("Recent Quotes")
+            st.subheader("Quote Search")
 
-            st.dataframe(
-                dashboard_df.tail(10),
-                use_container_width=True
-            )
+            search_quote = st.text_input("Search Quote Number")
+            search_customer = st.text_input("Search Customer")
+            search_po = st.text_input("Search PO Number")
+            search_status = st.selectbox("Filter Job Status", ["All"] + STATUS_OPTIONS)
+
+            filtered_df = dashboard_df.copy()
+
+            if search_quote:
+                filtered_df = filtered_df[
+                    filtered_df["Quote Number"].astype(str).str.contains(search_quote, case=False, na=False)
+                ]
+
+            if search_customer:
+                filtered_df = filtered_df[
+                    filtered_df["Customer"].astype(str).str.contains(search_customer, case=False, na=False)
+                ]
+
+            if search_po:
+                filtered_df = filtered_df[
+                    filtered_df["PO Number"].astype(str).str.contains(search_po, case=False, na=False)
+                ]
+
+            if search_status != "All":
+                filtered_df = filtered_df[
+                    filtered_df["Job Status"].astype(str) == search_status
+                ]
+
+            filtered_df = filtered_df.drop(columns=["Parsed Due Date", "Paid Blank"], errors="ignore")
+
+            st.subheader("Quote Results")
+            st.dataframe(filtered_df, use_container_width=True)
+
+            if overdue_invoices > 0:
+                st.subheader("Overdue Invoices")
+                st.dataframe(
+                    overdue_df.drop(columns=["Parsed Due Date", "Paid Blank"], errors="ignore"),
+                    use_container_width=True
+                )
 
     except Exception as e:
         st.error("Dashboard failed to load.")
@@ -209,28 +315,15 @@ with tab_create:
 
     auto_quote_number = generate_hebrew_quote_number()
 
-    quote_number = st.text_input(
-        "Quote Number",
-        value=auto_quote_number
-    )
-
+    quote_number = st.text_input("Quote Number", value=auto_quote_number)
     revision = st.text_input("Revision", "0")
+
+    quote_reference = f"{quote_number}-R{revision}"
+    st.info(f"Quote Reference: {quote_reference}")
 
     st.subheader("Internal Workflow Tracking")
 
-    job_status = st.selectbox(
-        "Job Status",
-        [
-            "Draft",
-            "Released",
-            "PO Received",
-            "Items Delivered",
-            "Invoice Sent",
-            "Paid",
-            "Completed",
-            "Closed"
-        ]
-    )
+    job_status = st.selectbox("Job Status", STATUS_OPTIONS)
 
     po_number = st.text_input("PO Number")
     invoice_number = st.text_input("Invoice Number")
@@ -245,10 +338,7 @@ with tab_create:
 
     st.subheader("Customer Details")
 
-    selected_customer = st.selectbox(
-        "Customer Contact",
-        customers_db["Contact Name"]
-    )
+    selected_customer = st.selectbox("Customer Contact", customers_db["Contact Name"])
 
     customer_row = customers_db[
         customers_db["Contact Name"] == selected_customer
@@ -259,11 +349,18 @@ with tab_create:
     address = customer_row["Address"]
     city_state = customer_row["City/State"]
 
+    customer_email = ""
+    if "Email" in customers_db.columns:
+        customer_email = str(customer_row["Email"])
+
     st.write(f"Name: {selected_customer}")
     st.write(f"Department: {department}")
     st.write(f"Company: {company}")
     st.write(f"Address: {address}")
     st.write(f"City/State: {city_state}")
+
+    if customer_email:
+        st.write(f"Email: {customer_email}")
 
     scope = st.text_area("Scope of Work")
 
@@ -482,16 +579,48 @@ with tab_create:
         st.download_button(
             label="Download Quote Excel",
             data=excel_file,
-            file_name=f"RME_Quote_{quote_number}.xlsx",
+            file_name=f"RME_Quote_{quote_reference}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
         st.download_button(
             label="Download Quote PDF",
             data=pdf_file,
-            file_name=f"RME_Quote_{quote_number}.pdf",
+            file_name=f"RME_Quote_{quote_reference}.pdf",
             mime="application/pdf"
         )
+
+        st.subheader("Email Quote")
+
+        email_to = st.text_input("Send to email", value=customer_email)
+        email_subject = st.text_input(
+            "Email subject",
+            value=f"RME Quotation {quote_reference}"
+        )
+        email_body = st.text_area(
+            "Email body",
+            value=f"""Hi,
+
+Please find attached RME quotation {quote_reference}.
+
+Regards,
+Rohit Saini
+Rail and Marine Engineering Pty Ltd"""
+        )
+
+        if st.button("Send Quote Email"):
+            try:
+                send_email_with_pdf(
+                    email_to,
+                    email_subject,
+                    email_body,
+                    pdf_file,
+                    f"RME_Quote_{quote_reference}.pdf"
+                )
+                st.success("Email sent successfully.")
+            except Exception as e:
+                st.error("Email sending failed.")
+                st.error(e)
 
 
 with tab_update:
@@ -504,41 +633,39 @@ with tab_update:
         if register_df.empty:
             st.write("No quote records found.")
         else:
-            quote_options = register_df["Quote Number"].astype(str).tolist()
+            register_df["Quote Display"] = (
+                register_df["Quote Number"].astype(str) +
+                "-R" +
+                register_df["Revision"].astype(str)
+            )
 
-            selected_quote_to_update = st.selectbox(
-                "Select Quote Number",
+            quote_options = register_df["Quote Display"].tolist()
+
+            selected_quote_display = st.selectbox(
+                "Select Quote",
                 quote_options
             )
 
             selected_record = register_df[
-                register_df["Quote Number"].astype(str) == selected_quote_to_update
+                register_df["Quote Display"] == selected_quote_display
             ].iloc[0]
+
+            selected_quote_number = str(selected_record.get("Quote Number", ""))
+            selected_revision = str(selected_record.get("Revision", ""))
 
             st.write("Customer:", selected_record.get("Customer", ""))
             st.write("Company:", selected_record.get("Company", ""))
             st.write("Current Status:", selected_record.get("Job Status", ""))
 
-            status_options = [
-                "Draft",
-                "Released",
-                "PO Received",
-                "Items Delivered",
-                "Invoice Sent",
-                "Paid",
-                "Completed",
-                "Closed"
-            ]
-
             current_status = selected_record.get("Job Status", "Draft")
 
-            if current_status not in status_options:
+            if current_status not in STATUS_OPTIONS:
                 current_status = "Draft"
 
             updated_job_status = st.selectbox(
                 "Update Job Status",
-                status_options,
-                index=status_options.index(current_status)
+                STATUS_OPTIONS,
+                index=STATUS_OPTIONS.index(current_status)
             )
 
             updated_po_number = st.text_input(
@@ -602,14 +729,15 @@ with tab_update:
                 }
 
                 success = update_register_row(
-                    selected_quote_to_update,
+                    selected_quote_number,
+                    selected_revision,
                     update_values
                 )
 
                 if success:
                     st.success("Quote register updated successfully.")
                 else:
-                    st.error("Quote number not found in register.")
+                    st.error("Quote number/revision not found in register.")
 
     except Exception as e:
         st.error("Could not load quote register.")
