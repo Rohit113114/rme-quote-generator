@@ -4,6 +4,8 @@ from openpyxl import load_workbook
 from datetime import datetime
 from io import BytesIO
 from pyluach import dates
+import gspread
+from google.oauth2.service_account import Credentials
 
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -19,19 +21,19 @@ def generate_hebrew_quote_number():
     hebrew_date = today.to_heb()
 
     month_codes = {
-        1: "NS",   # Nisan
-        2: "IY",   # Iyyar
-        3: "SV",   # Sivan
-        4: "TM",   # Tammuz
-        5: "AV",   # Av
-        6: "EL",   # Elul
-        7: "TS",   # Tishrei
-        8: "CH",   # Cheshvan
-        9: "KS",   # Kislev
-        10: "TV",  # Tevet
-        11: "SH",  # Shevat
-        12: "AD",  # Adar
-        13: "A2"   # Adar II
+        1: "NS",
+        2: "IY",
+        3: "SV",
+        4: "TM",
+        5: "AV",
+        6: "EL",
+        7: "TS",
+        8: "CH",
+        9: "KS",
+        10: "TV",
+        11: "SH",
+        12: "AD",
+        13: "A2"
     }
 
     return f"{hebrew_date.day:02d}{month_codes[hebrew_date.month]}{hebrew_date.year}"
@@ -43,11 +45,25 @@ def format_date(date_value):
     return date_value.strftime("%d/%m/%Y")
 
 
+def connect_google_sheet():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+
+    credentials = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=scopes
+    )
+
+    client = gspread.authorize(credentials)
+    sheet = client.open("RME Quote Register").sheet1
+
+    return sheet
+
+
 customers_db = pd.read_excel("customers.xlsx")
 customers_db.columns = customers_db.columns.str.strip()
-
-if "quote_history" not in st.session_state:
-    st.session_state.quote_history = []
 
 
 st.subheader("Quote Details")
@@ -302,31 +318,35 @@ if st.button("Generate Quote"):
     excel_file = create_excel_quote()
     pdf_file = create_pdf_quote()
 
-    history_row = {
-        "Created Date": datetime.today().strftime("%d/%m/%Y"),
-        "Quote Number": quote_number,
-        "Revision": revision,
-        "Customer": selected_customer,
-        "Department": department,
-        "Company": company,
-        "Job Status": job_status,
-        "PO Number": po_number,
-        "Invoice Number": invoice_number,
-        "Quote Released Date": format_date(quote_released_date),
-        "PO Received Date": format_date(po_received_date),
-        "Item Delivered Date": format_date(item_delivered_date),
-        "Invoice Sent Date": format_date(invoice_sent_date),
-        "Invoice Due Date": format_date(invoice_due_date),
-        "Invoice Paid Date": format_date(invoice_paid_date),
-        "Job Completed Date": format_date(job_completed_date),
-        "Subtotal": subtotal,
-        "GST": gst,
-        "Total": grand_total
-    }
+    history_row = [
+        quote_number,
+        revision,
+        datetime.today().strftime("%d/%m/%Y"),
+        selected_customer,
+        department,
+        company,
+        job_status,
+        po_number,
+        invoice_number,
+        format_date(quote_released_date),
+        format_date(po_received_date),
+        format_date(item_delivered_date),
+        format_date(invoice_sent_date),
+        format_date(invoice_due_date),
+        format_date(invoice_paid_date),
+        format_date(job_completed_date),
+        subtotal,
+        gst,
+        grand_total
+    ]
 
-    st.session_state.quote_history.append(history_row)
-
-    st.success("Quote Generated Successfully")
+    try:
+        sheet = connect_google_sheet()
+        sheet.append_row(history_row, value_input_option="USER_ENTERED")
+        st.success("Quote generated and saved to Google Sheets")
+    except Exception as e:
+        st.warning("Quote generated, but Google Sheet save failed.")
+        st.error(e)
 
     st.download_button(
         label="Download Quote Excel",
@@ -343,20 +363,26 @@ if st.button("Generate Quote"):
     )
 
 
-st.subheader("Quote History")
+st.subheader("Quote Register")
 
-if st.session_state.quote_history:
-    history_df = pd.DataFrame(st.session_state.quote_history)
+try:
+    sheet = connect_google_sheet()
+    records = sheet.get_all_records()
 
-    st.dataframe(history_df)
+    if records:
+        register_df = pd.DataFrame(records)
+        st.dataframe(register_df)
 
-    csv_data = history_df.to_csv(index=False).encode("utf-8")
+        csv_data = register_df.to_csv(index=False).encode("utf-8")
 
-    st.download_button(
-        label="Download Quote History",
-        data=csv_data,
-        file_name="quote_history.csv",
-        mime="text/csv"
-    )
-else:
-    st.write("No quotes generated yet.")
+        st.download_button(
+            label="Download Quote Register",
+            data=csv_data,
+            file_name="rme_quote_register.csv",
+            mime="text/csv"
+        )
+    else:
+        st.write("No quote records found yet.")
+
+except Exception:
+    st.write("Quote register will appear here after Google Sheets connection is active.")
