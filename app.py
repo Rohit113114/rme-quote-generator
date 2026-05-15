@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 from openpyxl import load_workbook
 from datetime import datetime
-import win32com.client
-import pythoncom
 
 st.title("RME Quote Generator")
 
@@ -130,33 +128,15 @@ if st.button("Generate Quote"):
     ws["L39"].number_format = '$#,##0.00'
     ws["L40"].number_format = '$#,##0.00'
 
-    output_excel = f"output/RME_Quote_{quote_number}.xlsx"
+    output_excel = f"RME_Quote_{quote_number}.xlsx"
     wb.save(output_excel)
 
-    try:
-        pythoncom.CoInitialize()
-
-        excel = win32com.client.Dispatch("Excel.Application")
-        excel.Visible = False
-
-        workbook_path = fr"C:\Users\rohit\opencv_projects\RME QUOTE GENERATOR\{output_excel}"
-        pdf_path = fr"C:\Users\rohit\opencv_projects\RME QUOTE GENERATOR\output\RME_Quote_{quote_number}.pdf"
-
-        workbook = excel.Workbooks.Open(workbook_path)
-        worksheet = workbook.Worksheets(1)
-
-        worksheet.ExportAsFixedFormat(0, pdf_path)
-
-        workbook.Close(False)
-        excel.Quit()
-
-        st.success(
-            f"Excel and PDF Generated Successfully:\n{output_excel}"
+    with open(output_excel, "rb") as file:
+        st.download_button(
+            label="Download Quote Excel",
+            data=file,
+            file_name=output_excel,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    except Exception as e:
-        st.warning(
-            "Excel quote was generated, but PDF export failed. "
-            "Close any open Excel files and try again."
-        )
-        st.error(e)
+    st.success("Quote Generated Successfully")
