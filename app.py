@@ -63,6 +63,13 @@ def parse_date(value):
         return None
 
 
+def clean_money(value):
+    try:
+        return float(str(value).replace("$", "").replace(",", "").strip())
+    except Exception:
+        return 0.0
+
+
 def connect_google_sheet():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -84,15 +91,8 @@ def connect_google_sheet():
             return sheet
 
         except Exception:
-            wait_time = min(
-                (2 ** retry) + random.uniform(0, 1),
-                maximum_backoff
-            )
-
-            st.warning(
-                f"Google Sheets is busy. Retrying in {wait_time:.1f} seconds..."
-            )
-
+            wait_time = min((2 ** retry) + random.uniform(0, 1), maximum_backoff)
+            st.warning(f"Google Sheets is busy. Retrying in {wait_time:.1f} seconds...")
             time.sleep(wait_time)
 
     raise Exception("Google Sheets connection failed after multiple retries.")
@@ -185,156 +185,82 @@ tab_dashboard, tab_create, tab_update, tab_register = st.tabs(
 
 
 with tab_dashboard:
-
     st.subheader("RME Quote Dashboard")
 
     try:
-
         dashboard_df = get_register_dataframe()
 
         if dashboard_df.empty:
             st.write("No quote data available.")
 
         else:
-
             for money_col in ["Subtotal", "GST", "Total"]:
-
-                dashboard_df[money_col] = (
-                    dashboard_df[money_col]
-                    .astype(str)
-                    .str.replace("$", "", regex=False)
-                    .str.replace(",", "", regex=False)
-                    .str.strip()
-                )
-
-                dashboard_df[money_col] = pd.to_numeric(
-                    dashboard_df[money_col],
-                    errors="coerce"
-                ).fillna(0)
+                dashboard_df[money_col] = dashboard_df[money_col].apply(clean_money)
 
             total_quotes = len(dashboard_df)
-
             total_revenue = dashboard_df["Total"].sum()
-
-            paid_jobs = len(
-                dashboard_df[
-                    dashboard_df["Job Status"] == "Paid"
-                ]
-            )
-
-            po_received = len(
-                dashboard_df[
-                    dashboard_df["Job Status"] == "PO Received"
-                ]
-            )
-
-            invoice_sent = len(
-                dashboard_df[
-                    dashboard_df["Job Status"] == "Invoice Sent"
-                ]
-            )
+            paid_jobs = len(dashboard_df[dashboard_df["Job Status"] == "Paid"])
+            po_received = len(dashboard_df[dashboard_df["Job Status"] == "PO Received"])
+            invoice_sent = len(dashboard_df[dashboard_df["Job Status"] == "Invoice Sent"])
 
             today_date = date.today()
 
-            dashboard_df["Parsed Due Date"] = dashboard_df[
-                "Invoice Due Date"
-            ].apply(parse_date)
-
+            dashboard_df["Parsed Due Date"] = dashboard_df["Invoice Due Date"].apply(parse_date)
             dashboard_df["Paid Blank"] = (
-                dashboard_df["Invoice Paid Date"]
-                .astype(str)
-                .str.strip() == ""
+                dashboard_df["Invoice Paid Date"].astype(str).str.strip() == ""
             )
 
             overdue_df = dashboard_df[
-                (dashboard_df["Parsed Due Date"].notna()) &
-                (dashboard_df["Parsed Due Date"] < today_date) &
-                (dashboard_df["Paid Blank"])
+                (dashboard_df["Parsed Due Date"].notna())
+                & (dashboard_df["Parsed Due Date"] < today_date)
+                & (dashboard_df["Paid Blank"])
             ]
 
             overdue_invoices = len(overdue_df)
 
             col1, col2, col3 = st.columns(3)
-
             col1.metric("Total Quotes", total_quotes)
-
-            col2.metric(
-                "Total Revenue",
-                f"${total_revenue:,.2f}"
-            )
-
+            col2.metric("Total Revenue", f"${total_revenue:,.2f}")
             col3.metric("Paid Jobs", paid_jobs)
 
             col4, col5, col6 = st.columns(3)
-
             col4.metric("PO Received", po_received)
-
             col5.metric("Invoices Sent", invoice_sent)
-
             col6.metric("Overdue Invoices", overdue_invoices)
 
             st.subheader("Quote Search")
 
-            search_quote = st.text_input(
-                "Search Quote Number"
-            )
-
-            search_customer = st.text_input(
-                "Search Customer"
-            )
-
-            search_po = st.text_input(
-                "Search PO Number"
-            )
-
-            search_status = st.selectbox(
-                "Filter Job Status",
-                ["All"] + STATUS_OPTIONS
-            )
+            search_quote = st.text_input("Search Quote Number")
+            search_customer = st.text_input("Search Customer")
+            search_po = st.text_input("Search PO Number")
+            search_status = st.selectbox("Filter Job Status", ["All"] + STATUS_OPTIONS)
 
             filtered_df = dashboard_df.copy()
 
             if search_quote:
-
                 filtered_df = filtered_df[
-                    filtered_df["Quote Number"]
-                    .astype(str)
-                    .str.contains(
-                        search_quote,
-                        case=False,
-                        na=False
+                    filtered_df["Quote Number"].astype(str).str.contains(
+                        search_quote, case=False, na=False
                     )
                 ]
 
             if search_customer:
-
                 filtered_df = filtered_df[
-                    filtered_df["Customer"]
-                    .astype(str)
-                    .str.contains(
-                        search_customer,
-                        case=False,
-                        na=False
+                    filtered_df["Customer"].astype(str).str.contains(
+                        search_customer, case=False, na=False
                     )
                 ]
 
             if search_po:
-
                 filtered_df = filtered_df[
-                    filtered_df["PO Number"]
-                    .astype(str)
-                    .str.contains(
-                        search_po,
-                        case=False,
-                        na=False
+                    filtered_df["PO Number"].astype(str).str.contains(
+                        search_po, case=False, na=False
                     )
                 ]
 
             if search_status != "All":
-
                 filtered_df = filtered_df[
-                    filtered_df["Job Status"]
-                    .astype(str) == search_status
+                    filtered_df["Job Status"].astype(str) == search_status
                 ]
 
             filtered_df = filtered_df.drop(
@@ -342,38 +268,31 @@ with tab_dashboard:
                 errors="ignore"
             )
 
-            st.subheader("Quote Results")
+            display_df = filtered_df.copy()
 
-display_df = filtered_df.copy()
-
-for money_col in ["Subtotal", "GST", "Total"]:
-
-    display_df[money_col] = display_df[money_col].apply(
-        lambda x: f"${x:,.2f}"
-    )
-
-st.dataframe(
-    display_df,
-    use_container_width=True
-)
-
-            if overdue_invoices > 0:
-
-                st.subheader("Overdue Invoices")
-
-                st.dataframe(
-                    overdue_df.drop(
-                        columns=[
-                            "Parsed Due Date",
-                            "Paid Blank"
-                        ],
-                        errors="ignore"
-                    ),
-                    use_container_width=True
+            for money_col in ["Subtotal", "GST", "Total"]:
+                display_df[money_col] = display_df[money_col].apply(
+                    lambda x: f"${x:,.2f}"
                 )
 
-    except Exception as e:
+            st.subheader("Quote Results")
+            st.dataframe(display_df, use_container_width=True)
 
+            if overdue_invoices > 0:
+                overdue_display_df = overdue_df.drop(
+                    columns=["Parsed Due Date", "Paid Blank"],
+                    errors="ignore"
+                ).copy()
+
+                for money_col in ["Subtotal", "GST", "Total"]:
+                    overdue_display_df[money_col] = overdue_display_df[money_col].apply(
+                        lambda x: f"${x:,.2f}"
+                    )
+
+                st.subheader("Overdue Invoices")
+                st.dataframe(overdue_display_df, use_container_width=True)
+
+    except Exception as e:
         st.error("Dashboard failed to load.")
         st.error(e)
 
@@ -815,7 +734,14 @@ with tab_register:
         register_df = get_register_dataframe()
 
         if not register_df.empty:
-            st.dataframe(register_df, use_container_width=True)
+            display_register_df = register_df.copy()
+
+            for money_col in ["Subtotal", "GST", "Total"]:
+                display_register_df[money_col] = display_register_df[money_col].apply(
+                    lambda x: f"${clean_money(x):,.2f}"
+                )
+
+            st.dataframe(display_register_df, use_container_width=True)
 
             csv_data = register_df.to_csv(index=False).encode("utf-8")
 
