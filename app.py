@@ -8,6 +8,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 import smtplib
 from email.message import EmailMessage
+import time
+import random
 
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -20,64 +22,17 @@ st.title("RME Commercial Dashboard")
 
 
 REGISTER_HEADERS = [
-    "Quote Number",
-    "Revision",
-    "Created Date",
-    "Customer",
-    "Department",
-    "Company",
-    "Job Status",
-    "PO Number",
-    "Invoice Number",
-    "Quote Released Date",
-    "PO Received Date",
-    "Item Delivered Date",
-    "Invoice Sent Date",
-    "Invoice Due Date",
-    "Invoice Paid Date",
-    "Job Completed Date",
-    "Subtotal",
-    "GST",
-    "Total"
+    "Quote Number", "Revision", "Created Date", "Customer", "Department",
+    "Company", "Job Status", "PO Number", "Invoice Number",
+    "Quote Released Date", "PO Received Date", "Item Delivered Date",
+    "Invoice Sent Date", "Invoice Due Date", "Invoice Paid Date",
+    "Job Completed Date", "Subtotal", "GST", "Total"
 ]
-
 
 STATUS_OPTIONS = [
-    "Draft",
-    "Released",
-    "PO Received",
-    "Items Delivered",
-    "Invoice Sent",
-    "Paid",
-    "Completed",
-    "Closed"
+    "Draft", "Released", "PO Received", "Items Delivered",
+    "Invoice Sent", "Paid", "Completed", "Closed"
 ]
-
-
-def check_login():
-    if "app_password" not in st.secrets:
-        return True
-
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-
-    if st.session_state.logged_in:
-        return True
-
-    password = st.text_input("Enter password", type="password")
-
-    if st.button("Login"):
-        if password == st.secrets["app_password"]:
-            st.session_state.logged_in = True
-            st.rerun()
-        else:
-            st.error("Incorrect password")
-
-    return False
-
-
-if not check_login():
-    st.stop()
 
 
 def generate_hebrew_quote_number():
@@ -85,19 +40,9 @@ def generate_hebrew_quote_number():
     hebrew_date = today.to_heb()
 
     month_codes = {
-        1: "NS",
-        2: "IY",
-        3: "SV",
-        4: "TM",
-        5: "AV",
-        6: "EL",
-        7: "TS",
-        8: "CH",
-        9: "KS",
-        10: "TV",
-        11: "SH",
-        12: "AD",
-        13: "A2"
+        1: "NS", 2: "IY", 3: "SV", 4: "TM", 5: "AV", 6: "EL",
+        7: "TS", 8: "CH", 9: "KS", 10: "TV", 11: "SH",
+        12: "AD", 13: "A2"
     }
 
     return f"{hebrew_date.day:02d}{month_codes[hebrew_date.month]}{hebrew_date.year}"
@@ -129,10 +74,28 @@ def connect_google_sheet():
         scopes=scopes
     )
 
-    client = gspread.authorize(credentials)
-    sheet = client.open("RME Quote Register").sheet1
+    max_retries = 5
+    maximum_backoff = 32
 
-    return sheet
+    for retry in range(max_retries):
+        try:
+            client = gspread.authorize(credentials)
+            sheet = client.open("RME Quote Register").sheet1
+            return sheet
+
+        except Exception:
+            wait_time = min(
+                (2 ** retry) + random.uniform(0, 1),
+                maximum_backoff
+            )
+
+            st.warning(
+                f"Google Sheets is busy. Retrying in {wait_time:.1f} seconds..."
+            )
+
+            time.sleep(wait_time)
+
+    raise Exception("Google Sheets connection failed after multiple retries.")
 
 
 def get_register_dataframe():
@@ -160,8 +123,14 @@ def update_register_row(quote_number, revision, update_values):
     row_to_update = None
 
     for row_number, row in enumerate(all_values[1:], start=2):
-        quote_match = len(row) >= quote_col_index and str(row[quote_col_index - 1]) == str(quote_number)
-        revision_match = len(row) >= revision_col_index and str(row[revision_col_index - 1]) == str(revision)
+        quote_match = (
+            len(row) >= quote_col_index
+            and str(row[quote_col_index - 1]) == str(quote_number)
+        )
+        revision_match = (
+            len(row) >= revision_col_index
+            and str(row[revision_col_index - 1]) == str(revision)
+        )
 
         if quote_match and revision_match:
             row_to_update = row_number
@@ -211,17 +180,11 @@ customers_db.columns = customers_db.columns.str.strip()
 
 
 tab_dashboard, tab_create, tab_update, tab_register = st.tabs(
-    [
-        "Dashboard",
-        "Create New Quote",
-        "Update Existing Quote",
-        "Quote Register"
-    ]
+    ["Dashboard", "Create New Quote", "Update Existing Quote", "Quote Register"]
 )
 
 
 with tab_dashboard:
-
     st.subheader("RME Quote Dashboard")
 
     try:
@@ -229,19 +192,19 @@ with tab_dashboard:
 
         if dashboard_df.empty:
             st.write("No quote data available.")
-
         else:
-            dashboard_df["Total"] = pd.to_numeric(dashboard_df["Total"], errors="coerce").fillna(0)
+            dashboard_df["Total"] = pd.to_numeric(
+                dashboard_df["Total"],
+                errors="coerce"
+            ).fillna(0)
 
             total_quotes = len(dashboard_df)
             total_revenue = dashboard_df["Total"].sum()
-
             paid_jobs = len(dashboard_df[dashboard_df["Job Status"] == "Paid"])
             po_received = len(dashboard_df[dashboard_df["Job Status"] == "PO Received"])
             invoice_sent = len(dashboard_df[dashboard_df["Job Status"] == "Invoice Sent"])
 
             today_date = date.today()
-
             dashboard_df["Parsed Due Date"] = dashboard_df["Invoice Due Date"].apply(parse_date)
             dashboard_df["Paid Blank"] = dashboard_df["Invoice Paid Date"].astype(str).str.strip() == ""
 
@@ -274,17 +237,29 @@ with tab_dashboard:
 
             if search_quote:
                 filtered_df = filtered_df[
-                    filtered_df["Quote Number"].astype(str).str.contains(search_quote, case=False, na=False)
+                    filtered_df["Quote Number"].astype(str).str.contains(
+                        search_quote,
+                        case=False,
+                        na=False
+                    )
                 ]
 
             if search_customer:
                 filtered_df = filtered_df[
-                    filtered_df["Customer"].astype(str).str.contains(search_customer, case=False, na=False)
+                    filtered_df["Customer"].astype(str).str.contains(
+                        search_customer,
+                        case=False,
+                        na=False
+                    )
                 ]
 
             if search_po:
                 filtered_df = filtered_df[
-                    filtered_df["PO Number"].astype(str).str.contains(search_po, case=False, na=False)
+                    filtered_df["PO Number"].astype(str).str.contains(
+                        search_po,
+                        case=False,
+                        na=False
+                    )
                 ]
 
             if search_status != "All":
@@ -292,7 +267,10 @@ with tab_dashboard:
                     filtered_df["Job Status"].astype(str) == search_status
                 ]
 
-            filtered_df = filtered_df.drop(columns=["Parsed Due Date", "Paid Blank"], errors="ignore")
+            filtered_df = filtered_df.drop(
+                columns=["Parsed Due Date", "Paid Blank"],
+                errors="ignore"
+            )
 
             st.subheader("Quote Results")
             st.dataframe(filtered_df, use_container_width=True)
@@ -300,7 +278,10 @@ with tab_dashboard:
             if overdue_invoices > 0:
                 st.subheader("Overdue Invoices")
                 st.dataframe(
-                    overdue_df.drop(columns=["Parsed Due Date", "Paid Blank"], errors="ignore"),
+                    overdue_df.drop(
+                        columns=["Parsed Due Date", "Paid Blank"],
+                        errors="ignore"
+                    ),
                     use_container_width=True
                 )
 
@@ -310,7 +291,6 @@ with tab_dashboard:
 
 
 with tab_create:
-
     st.subheader("Quote Details")
 
     auto_quote_number = generate_hebrew_quote_number()
@@ -376,7 +356,6 @@ with tab_create:
     items = []
 
     for i in range(item_count):
-
         st.markdown(f"### Item {i + 1}")
 
         part_no = st.text_input(f"Part Number {i + 1}", key=f"part{i}")
@@ -542,7 +521,6 @@ with tab_create:
         return pdf_buffer
 
     if st.button("Generate Quote"):
-
         excel_file = create_excel_quote()
         pdf_file = create_pdf_quote()
 
@@ -624,7 +602,6 @@ Rail and Marine Engineering Pty Ltd"""
 
 
 with tab_update:
-
     st.subheader("Update Existing Quote")
 
     try:
@@ -714,7 +691,6 @@ with tab_update:
             )
 
             if st.button("Update Quote Register"):
-
                 update_values = {
                     "Job Status": updated_job_status,
                     "PO Number": updated_po_number,
@@ -745,7 +721,6 @@ with tab_update:
 
 
 with tab_register:
-
     st.subheader("Quote Register")
 
     try:
