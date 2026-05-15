@@ -344,10 +344,18 @@ with tab_dashboard:
 
             st.subheader("Quote Results")
 
-            st.dataframe(
-                filtered_df,
-                use_container_width=True
-            )
+            display_df = filtered_df.copy()
+
+for money_col in ["Subtotal", "GST", "Total"]:
+
+    display_df[money_col] = display_df[money_col].apply(
+        lambda x: f"${x:,.2f}"
+    )
+
+st.dataframe(
+    display_df,
+    use_container_width=True
+)
 
             if overdue_invoices > 0:
 
