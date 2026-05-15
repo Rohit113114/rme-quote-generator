@@ -13,7 +13,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 
 
-st.title("RME Operations Portal")
+st.title("RME Commercial Dashboard")
 
 
 REGISTER_HEADERS = [
