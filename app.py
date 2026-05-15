@@ -193,10 +193,19 @@ with tab_dashboard:
         if dashboard_df.empty:
             st.write("No quote data available.")
         else:
-            dashboard_df["Total"] = pd.to_numeric(
-                dashboard_df["Total"],
-                errors="coerce"
-            ).fillna(0)
+for money_col in ["Subtotal", "GST", "Total"]:
+    dashboard_df[money_col] = (
+        dashboard_df[money_col]
+        .astype(str)
+        .str.replace("$", "", regex=False)
+        .str.replace(",", "", regex=False)
+        .str.strip()
+    )
+
+    dashboard_df[money_col] = pd.to_numeric(
+        dashboard_df[money_col],
+        errors="coerce"
+    ).fillna(0)
 
             total_quotes = len(dashboard_df)
             total_revenue = dashboard_df["Total"].sum()
