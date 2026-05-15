@@ -697,48 +697,51 @@ with tab_update:
                 value=str(selected_record.get("Job Completed Date", ""))
             )
 
-            if st.button("Update Quote Register"):
-update_values = {
-    "Job Status": updated_job_status,
-    "PO Number": updated_po_number,
-    "Invoice Number": updated_invoice_number,
-    "Quote Released Date": update_quote_released_date,
-    "PO Received Date": update_po_received_date,
-    "Item Delivered Date": update_item_delivered_date,
-    "Invoice Sent Date": update_invoice_sent_date,
-    "Invoice Due Date": update_invoice_due_date,
-    "Invoice Paid Date": update_invoice_paid_date,
-    "Job Completed Date": update_job_completed_date
-}
+if st.button("Update Quote Register"):
 
-if updated_job_status == "Released" and not update_quote_released_date:
-    update_values["Quote Released Date"] = today_string
+        today_string = datetime.today().strftime("%d/%m/%Y")
+    
+        update_values = {
+            "Job Status": updated_job_status,
+            "PO Number": updated_po_number,
+            "Invoice Number": updated_invoice_number,
+            "Quote Released Date": update_quote_released_date,
+            "PO Received Date": update_po_received_date,
+            "Item Delivered Date": update_item_delivered_date,
+            "Invoice Sent Date": update_invoice_sent_date,
+            "Invoice Due Date": update_invoice_due_date,
+            "Invoice Paid Date": update_invoice_paid_date,
+            "Job Completed Date": update_job_completed_date
+        }
+    
+        if updated_job_status == "Released" and not update_quote_released_date:
+            update_values["Quote Released Date"] = today_string
+    
+        if updated_job_status == "PO Received" and not update_po_received_date:
+            update_values["PO Received Date"] = today_string
+    
+        if updated_job_status == "Items Delivered" and not update_item_delivered_date:
+            update_values["Item Delivered Date"] = today_string
+    
+        if updated_job_status == "Invoice Sent" and not update_invoice_sent_date:
+            update_values["Invoice Sent Date"] = today_string
+    
+        if updated_job_status == "Paid" and not update_invoice_paid_date:
+            update_values["Invoice Paid Date"] = today_string
+    
+        if updated_job_status == "Completed" and not update_job_completed_date:
+            update_values["Job Completed Date"] = today_string
+    
+        success = update_register_row(
+            selected_quote_number,
+            selected_revision,
+            update_values
+        )
 
-if updated_job_status == "PO Received" and not update_po_received_date:
-    update_values["PO Received Date"] = today_string
-
-if updated_job_status == "Items Delivered" and not update_item_delivered_date:
-    update_values["Item Delivered Date"] = today_string
-
-if updated_job_status == "Invoice Sent" and not update_invoice_sent_date:
-    update_values["Invoice Sent Date"] = today_string
-
-if updated_job_status == "Paid" and not update_invoice_paid_date:
-    update_values["Invoice Paid Date"] = today_string
-
-if updated_job_status == "Completed" and not update_job_completed_date:
-    update_values["Job Completed Date"] = today_string
-
-                success = update_register_row(
-                    selected_quote_number,
-                    selected_revision,
-                    update_values
-                )
-
-                if success:
-                    st.success("Quote register updated successfully.")
-                else:
-                    st.error("Quote number/revision not found in register.")
+    if success:
+        st.success("Quote register updated successfully.")
+    else:
+        st.error("Quote number/revision not found in register.")
 
     except Exception as e:
         st.error("Could not load quote register.")
