@@ -7,7 +7,7 @@ import pythoncom
 
 st.title("RME Quote Generator")
 
-customers_db = pd.read_excel("data/customers.xlsx")
+customers_db = pd.read_excel("customers.xlsx")
 customers_db.columns = customers_db.columns.str.strip()
 
 quote_number = st.text_input("Quote Number")
@@ -83,7 +83,7 @@ st.write(f"Grand Total: ${grand_total:,.2f}")
 
 if st.button("Generate Quote"):
 
-    wb = load_workbook("templates/rme_excel_template.xlsx")
+    wb = load_workbook("rme_excel_template.xlsx")
     ws = wb.active
 
     ws["F8"] = quote_number
