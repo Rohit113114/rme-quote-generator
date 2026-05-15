@@ -344,7 +344,7 @@ with tab_dashboard:
 
             st.subheader("Quote Results")
 
-            display_df = filtered_df.copy()
+display_df = filtered_df.copy()
 
 for money_col in ["Subtotal", "GST", "Total"]:
 
