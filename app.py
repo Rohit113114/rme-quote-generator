@@ -103,7 +103,6 @@ def update_register_row(quote_number, update_values):
         return False
 
     headers = all_values[0]
-
     quote_col_index = headers.index("Quote Number") + 1
 
     row_to_update = None
@@ -128,9 +127,80 @@ customers_db = pd.read_excel("customers.xlsx")
 customers_db.columns = customers_db.columns.str.strip()
 
 
-tab_create, tab_update, tab_register = st.tabs(
-    ["Create New Quote", "Update Existing Quote", "Quote Register"]
+tab_dashboard, tab_create, tab_update, tab_register = st.tabs(
+    [
+        "Dashboard",
+        "Create New Quote",
+        "Update Existing Quote",
+        "Quote Register"
+    ]
 )
+
+
+with tab_dashboard:
+
+    st.subheader("RME Quote Dashboard")
+
+    try:
+        dashboard_df = get_register_dataframe()
+
+        if dashboard_df.empty:
+            st.write("No quote data available.")
+
+        else:
+            total_quotes = len(dashboard_df)
+
+            total_revenue = pd.to_numeric(
+                dashboard_df["Total"],
+                errors="coerce"
+            ).fillna(0).sum()
+
+            paid_jobs = len(
+                dashboard_df[
+                    dashboard_df["Job Status"] == "Paid"
+                ]
+            )
+
+            po_received = len(
+                dashboard_df[
+                    dashboard_df["Job Status"] == "PO Received"
+                ]
+            )
+
+            invoice_sent = len(
+                dashboard_df[
+                    dashboard_df["Job Status"] == "Invoice Sent"
+                ]
+            )
+
+            outstanding_invoices = len(
+                dashboard_df[
+                    dashboard_df["Invoice Paid Date"].astype(str).str.strip() == ""
+                ]
+            )
+
+            col1, col2, col3 = st.columns(3)
+
+            col1.metric("Total Quotes", total_quotes)
+            col2.metric("Total Revenue", f"${total_revenue:,.2f}")
+            col3.metric("Paid Jobs", paid_jobs)
+
+            col4, col5, col6 = st.columns(3)
+
+            col4.metric("PO Received", po_received)
+            col5.metric("Invoices Sent", invoice_sent)
+            col6.metric("Outstanding Invoices", outstanding_invoices)
+
+            st.subheader("Recent Quotes")
+
+            st.dataframe(
+                dashboard_df.tail(10),
+                use_container_width=True
+            )
+
+    except Exception as e:
+        st.error("Dashboard failed to load.")
+        st.error(e)
 
 
 with tab_create:
@@ -449,39 +519,26 @@ with tab_update:
             st.write("Company:", selected_record.get("Company", ""))
             st.write("Current Status:", selected_record.get("Job Status", ""))
 
+            status_options = [
+                "Draft",
+                "Released",
+                "PO Received",
+                "Items Delivered",
+                "Invoice Sent",
+                "Paid",
+                "Completed",
+                "Closed"
+            ]
+
+            current_status = selected_record.get("Job Status", "Draft")
+
+            if current_status not in status_options:
+                current_status = "Draft"
+
             updated_job_status = st.selectbox(
                 "Update Job Status",
-                [
-                    "Draft",
-                    "Released",
-                    "PO Received",
-                    "Items Delivered",
-                    "Invoice Sent",
-                    "Paid",
-                    "Completed",
-                    "Closed"
-                ],
-                index=[
-                    "Draft",
-                    "Released",
-                    "PO Received",
-                    "Items Delivered",
-                    "Invoice Sent",
-                    "Paid",
-                    "Completed",
-                    "Closed"
-                ].index(selected_record.get("Job Status", "Draft"))
-                if selected_record.get("Job Status", "Draft") in [
-                    "Draft",
-                    "Released",
-                    "PO Received",
-                    "Items Delivered",
-                    "Invoice Sent",
-                    "Paid",
-                    "Completed",
-                    "Closed"
-                ]
-                else 0
+                status_options,
+                index=status_options.index(current_status)
             )
 
             updated_po_number = st.text_input(
@@ -567,7 +624,7 @@ with tab_register:
         register_df = get_register_dataframe()
 
         if not register_df.empty:
-            st.dataframe(register_df)
+            st.dataframe(register_df, use_container_width=True)
 
             csv_data = register_df.to_csv(index=False).encode("utf-8")
 
