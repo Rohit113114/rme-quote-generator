@@ -1,25 +1,36 @@
-import streamlit as st
-import pandas as pd
-from openpyxl import load_workbook
-from datetime import datetime, date
-from io import BytesIO
-from pyluach import dates
-import gspread
-from google.oauth2.service_account import Credentials
+import re
 import smtplib
-from email.message import EmailMessage
 import time
 import random
+from datetime import datetime, date
+from io import BytesIO
+from pathlib import Path
+from xml.sax.saxutils import escape
+from email.message import EmailMessage
 
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+import gspread
+import pandas as pd
+import streamlit as st
+from google.oauth2.service_account import Credentials
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
+from pyluach import dates
 from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
 st.set_page_config(page_title="RME Commercial Dashboard", layout="wide")
 st.title("RME Commercial Dashboard")
 
+
+CUSTOMERS_FILE = Path("customers.xlsx")
+QUOTE_TEMPLATE_FILE = Path("rme_excel_template.xlsx")
+GOOGLE_SHEET_NAME = "RME Quote Register"
+MAX_ITEM_ROWS = 12
+MAX_RETRIES = 5
+MAXIMUM_BACKOFF = 32
 
 REGISTER_HEADERS = [
     "Quote Number", "Revision", "Created Date", "Customer", "Department",
@@ -34,53 +45,121 @@ STATUS_OPTIONS = [
     "Invoice Sent", "Paid", "Completed", "Closed"
 ]
 
-
-def generate_hebrew_quote_number():
-    today = dates.GregorianDate.today()
-    hebrew_date = today.to_heb()
-
-    month_codes = {
-        1: "NS",
-        2: "IY",
-        3: "SV",
-        4: "TM",
-        5: "AV",
-        6: "EL",
-        7: "TS",
-        8: "CH",
-        9: "KS",
-        10: "TV",
-        11: "SH",
-        12: "AD",
-        13: "A2"
-    }
-
-    return f"{hebrew_date.day:02d}{month_codes[hebrew_date.month]}{hebrew_date.year}"
+MONEY_COLUMNS = ["Subtotal", "GST", "Total"]
 
 
-def format_date(date_value):
-    if date_value is None:
-        return ""
-    return date_value.strftime("%d/%m/%Y")
-
-
-def parse_date(value):
+def is_blank(value):
+    if value is None:
+        return True
     try:
-        if value is None or str(value).strip() == "":
-            return None
-        return datetime.strptime(str(value), "%d/%m/%Y").date()
+        if pd.isna(value):
+            return True
     except Exception:
-        return None
+        pass
+    return str(value).strip() in {"", "nan", "NaN", "NaT", "None"}
+
+
+def clean_text(value):
+    return "" if is_blank(value) else str(value).strip()
 
 
 def clean_money(value):
+    if is_blank(value):
+        return 0.0
     try:
         return float(str(value).replace("$", "").replace(",", "").strip())
     except Exception:
         return 0.0
 
 
-def connect_google_sheet():
+def clean_bool(value, default=False):
+    if is_blank(value):
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def parse_date(value):
+    if is_blank(value):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+
+    for date_format in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(str(value).strip(), date_format).date()
+        except ValueError:
+            pass
+
+    parsed = pd.to_datetime(value, dayfirst=True, errors="coerce")
+    return None if pd.isna(parsed) else parsed.date()
+
+
+def format_date(date_value):
+    parsed_date = parse_date(date_value)
+    return "" if parsed_date is None else parsed_date.strftime("%d/%m/%Y")
+
+
+def paragraph_safe(value):
+    text = clean_text(value).replace("\r\n", "\n").replace("\r", "\n")
+    return escape(text).replace("\n", "<br/>") or " "
+
+
+def generate_hebrew_quote_prefix():
+    today = dates.GregorianDate.today()
+    hebrew_date = today.to_heb()
+
+    month_codes = {
+        1: "NS", 2: "IY", 3: "SV", 4: "TM", 5: "AV", 6: "EL",
+        7: "TS", 8: "CH", 9: "KS", 10: "TV", 11: "SH", 12: "AD", 13: "A2"
+    }
+
+    return f"{hebrew_date.day:02d}{month_codes[hebrew_date.month]}{hebrew_date.year}"
+
+
+def generate_next_quote_number(register_df=None):
+    prefix = generate_hebrew_quote_prefix()
+    next_sequence = 1
+
+    if register_df is not None and "Quote Number" in register_df.columns:
+        pattern = re.compile(rf"^{re.escape(prefix)}(?:-(\d{{3}}))?$")
+
+        for quote_number in register_df["Quote Number"].dropna().astype(str):
+            match = pattern.match(quote_number.strip())
+            if match:
+                sequence = int(match.group(1) or "1")
+                next_sequence = max(next_sequence, sequence + 1)
+
+    return f"{prefix}-{next_sequence:03d}"
+
+
+def run_with_google_retries(action_name, operation):
+    last_exception = None
+
+    for retry in range(MAX_RETRIES):
+        try:
+            return operation()
+        except Exception as exc:
+            last_exception = exc
+
+            if retry == MAX_RETRIES - 1:
+                break
+
+            wait_time = min((2 ** retry) + random.uniform(0, 1), MAXIMUM_BACKOFF)
+            st.warning(f"{action_name} failed temporarily. Retrying in {wait_time:.1f} seconds...")
+            time.sleep(wait_time)
+
+    raise last_exception
+
+
+@st.cache_resource(show_spinner=False)
+def get_google_client():
+    if "gcp_service_account" not in st.secrets:
+        raise RuntimeError("Google service account settings are missing from Streamlit Secrets.")
+
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
@@ -91,59 +170,116 @@ def connect_google_sheet():
         scopes=scopes
     )
 
-    max_retries = 5
-    maximum_backoff = 32
-
-    for retry in range(max_retries):
-        try:
-            client = gspread.authorize(credentials)
-            sheet = client.open("RME Quote Register").sheet1
-            return sheet
-
-        except Exception:
-            wait_time = min((2 ** retry) + random.uniform(0, 1), maximum_backoff)
-            st.warning(f"Google Sheets is busy. Retrying in {wait_time:.1f} seconds...")
-            time.sleep(wait_time)
-
-    raise Exception("Google Sheets connection failed after multiple retries.")
+    return gspread.authorize(credentials)
 
 
+def connect_google_sheet():
+    sheet_name = st.secrets.get("google_sheet_name", GOOGLE_SHEET_NAME)
+    return run_with_google_retries(
+        "Google Sheets connection",
+        lambda: get_google_client().open(sheet_name).sheet1
+    )
+
+
+def update_sheet_range(sheet, range_name, values, value_input_option="USER_ENTERED"):
+    return sheet.update(
+        range_name=range_name,
+        values=values,
+        value_input_option=value_input_option
+    )
+
+
+def get_sheet_values(sheet):
+    return run_with_google_retries("Quote register read", sheet.get_all_values)
+
+
+def ensure_register_headers(sheet):
+    all_values = get_sheet_values(sheet)
+    headers = [clean_text(header) for header in all_values[0]] if all_values else []
+
+    if not headers or not any(headers):
+        last_column = get_column_letter(len(REGISTER_HEADERS))
+        update_sheet_range(sheet, f"A1:{last_column}1", [REGISTER_HEADERS], "RAW")
+        return REGISTER_HEADERS.copy()
+
+    missing_headers = [header for header in REGISTER_HEADERS if header not in headers]
+    normalized_headers = headers + missing_headers
+
+    if normalized_headers != headers:
+        last_column = get_column_letter(len(normalized_headers))
+        update_sheet_range(sheet, f"A1:{last_column}1", [normalized_headers], "RAW")
+
+    return normalized_headers
+
+
+@st.cache_data(ttl=30, show_spinner=False)
 def get_register_dataframe():
     sheet = connect_google_sheet()
-    records = sheet.get_all_records()
+    headers = ensure_register_headers(sheet)
+    all_values = get_sheet_values(sheet)
 
-    if records:
-        return pd.DataFrame(records)
+    records = []
+    for row in all_values[1:]:
+        padded_row = row + [""] * (len(headers) - len(row))
+        record = dict(zip(headers, padded_row[:len(headers)]))
 
-    return pd.DataFrame(columns=REGISTER_HEADERS)
+        if any(clean_text(value) for value in record.values()):
+            records.append(record)
+
+    register_df = pd.DataFrame(records) if records else pd.DataFrame(columns=headers)
+
+    for header in REGISTER_HEADERS:
+        if header not in register_df.columns:
+            register_df[header] = ""
+
+    ordered_columns = REGISTER_HEADERS + [
+        column for column in register_df.columns if column not in REGISTER_HEADERS
+    ]
+
+    return register_df[ordered_columns]
+
+
+def clear_register_cache():
+    try:
+        get_register_dataframe.clear()
+    except Exception:
+        pass
+
+
+def append_register_row(row_values):
+    sheet = connect_google_sheet()
+    headers = ensure_register_headers(sheet)
+
+    row_by_header = dict(zip(REGISTER_HEADERS, row_values))
+    aligned_row = [row_by_header.get(header, "") for header in headers]
+
+    run_with_google_retries(
+        "Quote register save",
+        lambda: sheet.append_row(aligned_row, value_input_option="USER_ENTERED")
+    )
+    clear_register_cache()
 
 
 def update_register_row(quote_number, revision, update_values):
     sheet = connect_google_sheet()
-    all_values = sheet.get_all_values()
+    headers = ensure_register_headers(sheet)
+    all_values = get_sheet_values(sheet)
 
-    if not all_values:
-        return False
-
-    headers = all_values[0]
-
-    quote_col_index = headers.index("Quote Number") + 1
-    revision_col_index = headers.index("Revision") + 1
+    quote_col_index = headers.index("Quote Number")
+    revision_col_index = headers.index("Revision")
 
     row_to_update = None
+    row_values = None
 
     for row_number, row in enumerate(all_values[1:], start=2):
-        quote_match = (
-            len(row) >= quote_col_index
-            and str(row[quote_col_index - 1]) == str(quote_number)
-        )
-        revision_match = (
-            len(row) >= revision_col_index
-            and str(row[revision_col_index - 1]) == str(revision)
-        )
+        padded_row = row + [""] * (len(headers) - len(row))
 
-        if quote_match and revision_match:
+        if (
+            clean_text(padded_row[quote_col_index]) == clean_text(quote_number)
+            and clean_text(padded_row[revision_col_index]) == clean_text(revision)
+        ):
             row_to_update = row_number
+            row_values = padded_row[:len(headers)]
             break
 
     if row_to_update is None:
@@ -151,21 +287,58 @@ def update_register_row(quote_number, revision, update_values):
 
     for column_name, value in update_values.items():
         if column_name in headers:
-            col_index = headers.index(column_name) + 1
-            sheet.update_cell(row_to_update, col_index, value)
+            row_values[headers.index(column_name)] = value
 
+    last_column = get_column_letter(len(headers))
+    run_with_google_retries(
+        "Quote register update",
+        lambda: update_sheet_range(sheet, f"A{row_to_update}:{last_column}{row_to_update}", [row_values])
+    )
+    clear_register_cache()
     return True
 
 
-def send_email_with_pdf(to_email, subject, body, pdf_file, pdf_filename):
-    if "smtp" not in st.secrets:
-        raise Exception("SMTP email settings are not configured in Streamlit Secrets.")
+def quote_revision_exists(register_df, quote_number, revision):
+    if register_df.empty:
+        return False
 
-    smtp_host = st.secrets["smtp"]["host"]
-    smtp_port = int(st.secrets["smtp"]["port"])
-    smtp_user = st.secrets["smtp"]["username"]
-    smtp_password = st.secrets["smtp"]["password"]
-    from_email = st.secrets["smtp"]["from_email"]
+    quote_matches = register_df["Quote Number"].apply(clean_text) == clean_text(quote_number)
+    revision_matches = register_df["Revision"].apply(clean_text) == clean_text(revision)
+
+    return bool((quote_matches & revision_matches).any())
+
+
+@st.cache_data(show_spinner=False)
+def load_customers():
+    if not CUSTOMERS_FILE.exists():
+        raise FileNotFoundError(f"{CUSTOMERS_FILE} was not found.")
+
+    customers = pd.read_excel(CUSTOMERS_FILE)
+    customers.columns = customers.columns.astype(str).str.strip()
+
+    required_columns = ["Contact Name", "Department", "Company", "Address", "City/State"]
+    missing_columns = [column for column in required_columns if column not in customers.columns]
+
+    if missing_columns:
+        raise ValueError("customers.xlsx is missing required columns: " + ", ".join(missing_columns))
+
+    if customers.empty:
+        raise ValueError("customers.xlsx does not contain any customer rows.")
+
+    return customers.fillna("")
+
+
+def send_email_with_pdf(to_email, subject, body, pdf_bytes, pdf_filename):
+    if "smtp" not in st.secrets:
+        raise RuntimeError("SMTP email settings are not configured in Streamlit Secrets.")
+
+    smtp_settings = st.secrets["smtp"]
+    smtp_host = smtp_settings["host"]
+    smtp_port = int(smtp_settings["port"])
+    smtp_user = smtp_settings["username"]
+    smtp_password = smtp_settings["password"]
+    from_email = smtp_settings["from_email"]
+    use_ssl = clean_bool(smtp_settings.get("use_ssl", smtp_port == 465), smtp_port == 465)
 
     msg = EmailMessage()
     msg["From"] = from_email
@@ -174,19 +347,182 @@ def send_email_with_pdf(to_email, subject, body, pdf_file, pdf_filename):
     msg.set_content(body)
 
     msg.add_attachment(
-        pdf_file.getvalue(),
+        pdf_bytes,
         maintype="application",
         subtype="pdf",
         filename=pdf_filename
     )
 
-    with smtplib.SMTP_SSL(smtp_host, smtp_port) as smtp:
-        smtp.login(smtp_user, smtp_password)
-        smtp.send_message(msg)
+    if use_ssl:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port) as smtp:
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+    else:
+        with smtplib.SMTP(smtp_host, smtp_port) as smtp:
+            smtp.starttls()
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
 
 
-customers_db = pd.read_excel("customers.xlsx")
-customers_db.columns = customers_db.columns.str.strip()
+def format_quote_option(register_df, row_index):
+    row = register_df.loc[row_index]
+    parts = [f"{clean_text(row.get('Quote Number', ''))}-R{clean_text(row.get('Revision', ''))}"]
+
+    customer = clean_text(row.get("Customer", ""))
+    created_date = clean_text(row.get("Created Date", ""))
+
+    if customer:
+        parts.append(customer)
+    if created_date:
+        parts.append(created_date)
+
+    return " | ".join(parts)
+
+
+def create_excel_quote(
+    quote_number, revision, selected_customer, department, company, address,
+    city_state, scope, items, subtotal, gst, grand_total
+):
+    if not QUOTE_TEMPLATE_FILE.exists():
+        raise FileNotFoundError(f"{QUOTE_TEMPLATE_FILE} was not found.")
+
+    if len(items) > MAX_ITEM_ROWS:
+        raise ValueError(f"The Excel quote template supports up to {MAX_ITEM_ROWS} item rows.")
+
+    workbook = load_workbook(QUOTE_TEMPLATE_FILE)
+    worksheet = workbook.active
+
+    worksheet["F8"] = quote_number
+    worksheet["K8"] = revision
+    worksheet["F9"] = datetime.today().strftime("%d/%m/%Y")
+
+    worksheet["C13"] = selected_customer
+    worksheet["C14"] = department
+    worksheet["C15"] = company
+    worksheet["C16"] = address
+    worksheet["C17"] = city_state
+    worksheet["B20"] = scope
+
+    start_row = 26
+    for row in range(start_row, start_row + MAX_ITEM_ROWS):
+        for column in ("B", "C", "K", "L", "M"):
+            worksheet[f"{column}{row}"] = None
+
+    for index, item in enumerate(items):
+        row = start_row + index
+        worksheet[f"B{row}"] = item["part_no"]
+        worksheet[f"C{row}"] = item["description"]
+        worksheet[f"K{row}"] = item["qty"]
+        worksheet[f"L{row}"] = item["unit_price"]
+        worksheet[f"M{row}"] = item["total"]
+        worksheet[f"L{row}"].number_format = '$#,##0.00'
+        worksheet[f"M{row}"].number_format = '$#,##0.00'
+
+    worksheet["L38"] = subtotal
+    worksheet["L39"] = gst
+    worksheet["L40"] = grand_total
+
+    for cell in ("L38", "L39", "L40"):
+        worksheet[cell].number_format = '$#,##0.00'
+
+    excel_buffer = BytesIO()
+    workbook.save(excel_buffer)
+    return excel_buffer.getvalue()
+
+
+def create_pdf_quote(
+    quote_number, revision, selected_customer, department, company, address,
+    city_state, scope, items, subtotal, gst, grand_total
+):
+    pdf_buffer = BytesIO()
+
+    document = SimpleDocTemplate(
+        pdf_buffer,
+        pagesize=landscape(A4),
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=30,
+        bottomMargin=30
+    )
+
+    styles = getSampleStyleSheet()
+    table_cell_style = ParagraphStyle(
+        "QuoteTableCell",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=8,
+        leading=10
+    )
+
+    elements = [
+        Paragraph("Rail and Marine Engineering Pty Ltd", styles["Title"]),
+        Paragraph("ACN 656374373 | ABN 82656374373 | Bibra Lake, Western Australia", styles["Normal"]),
+        Spacer(1, 12),
+        Paragraph(f"Quotation: {paragraph_safe(quote_number)} Rev {paragraph_safe(revision)}", styles["Heading2"]),
+        Paragraph(f"Date: {datetime.today().strftime('%d/%m/%Y')}", styles["Normal"]),
+        Spacer(1, 12),
+    ]
+
+    customer_text = f"""
+    <b>Customer</b><br/>
+    Name: {paragraph_safe(selected_customer)}<br/>
+    Department: {paragraph_safe(department)}<br/>
+    Company: {paragraph_safe(company)}<br/>
+    Address: {paragraph_safe(address)}<br/>
+    City/State: {paragraph_safe(city_state)}
+    """
+
+    elements += [
+        Paragraph(customer_text, styles["Normal"]),
+        Spacer(1, 12),
+        Paragraph("<b>Description of work, scope and conditions</b>", styles["Normal"]),
+        Paragraph(paragraph_safe(scope), styles["Normal"]),
+        Spacer(1, 12),
+    ]
+
+    table_data = [["RME P/N", "Description", "Qty", "$ per unit", "$ Value"]]
+
+    for item in items:
+        table_data.append([
+            Paragraph(paragraph_safe(item["part_no"]), table_cell_style),
+            Paragraph(paragraph_safe(item["description"]), table_cell_style),
+            item["qty"],
+            f"${item['unit_price']:,.2f}",
+            f"${item['total']:,.2f}"
+        ])
+
+    table_data.append(["", "", "", "Sub Total", f"${subtotal:,.2f}"])
+    table_data.append(["", "", "", "10% GST", f"${gst:,.2f}"])
+    table_data.append(["", "", "", "Total including GST", f"${grand_total:,.2f}"])
+
+    table = Table(table_data, colWidths=[90, 300, 60, 100, 100], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.black),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ("ALIGN", (2, 1), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (3, -3), (-1, -1), "Helvetica-Bold"),
+    ]))
+
+    elements += [
+        table,
+        Spacer(1, 20),
+        Paragraph("Contact Details", styles["Heading3"]),
+        Paragraph("Rohit Saini | Mechanical Engineer | +610481247284 | rohit@rmerail.com", styles["Normal"])
+    ]
+
+    document.build(elements)
+    return pdf_buffer.getvalue()
+
+
+try:
+    customers_db = load_customers()
+    customers_load_error = None
+except Exception as exc:
+    customers_db = pd.DataFrame()
+    customers_load_error = exc
 
 
 tab_dashboard, tab_create, tab_update, tab_register = st.tabs(
@@ -202,31 +538,27 @@ with tab_dashboard:
 
         if dashboard_df.empty:
             st.write("No quote data available.")
-
         else:
-            for money_col in ["Subtotal", "GST", "Total"]:
+            for money_col in MONEY_COLUMNS:
                 dashboard_df[money_col] = dashboard_df[money_col].apply(clean_money)
+
+            dashboard_df["Parsed Due Date"] = dashboard_df["Invoice Due Date"].apply(parse_date)
+            dashboard_df["Paid Blank"] = dashboard_df["Invoice Paid Date"].apply(is_blank)
 
             total_quotes = len(dashboard_df)
             total_revenue = dashboard_df["Total"].sum()
-            paid_jobs = len(dashboard_df[dashboard_df["Job Status"] == "Paid"])
+            paid_jobs = len(dashboard_df[
+                dashboard_df["Job Status"].isin(["Paid", "Completed", "Closed"])
+                | (~dashboard_df["Paid Blank"])
+            ])
             po_received = len(dashboard_df[dashboard_df["Job Status"] == "PO Received"])
             invoice_sent = len(dashboard_df[dashboard_df["Job Status"] == "Invoice Sent"])
 
-            today_date = date.today()
-
-            dashboard_df["Parsed Due Date"] = dashboard_df["Invoice Due Date"].apply(parse_date)
-            dashboard_df["Paid Blank"] = (
-                dashboard_df["Invoice Paid Date"].astype(str).str.strip() == ""
-            )
-
             overdue_df = dashboard_df[
                 (dashboard_df["Parsed Due Date"].notna())
-                & (dashboard_df["Parsed Due Date"] < today_date)
+                & (dashboard_df["Parsed Due Date"] < date.today())
                 & (dashboard_df["Paid Blank"])
             ]
-
-            overdue_invoices = len(overdue_df)
 
             col1, col2, col3 = st.columns(3)
             col1.metric("Total Quotes", total_quotes)
@@ -236,7 +568,7 @@ with tab_dashboard:
             col4, col5, col6 = st.columns(3)
             col4.metric("PO Received", po_received)
             col5.metric("Invoices Sent", invoice_sent)
-            col6.metric("Overdue Invoices", overdue_invoices)
+            col6.metric("Overdue Invoices", len(overdue_df))
 
             st.subheader("Quote Search")
 
@@ -249,373 +581,290 @@ with tab_dashboard:
 
             if search_quote:
                 filtered_df = filtered_df[
-                    filtered_df["Quote Number"].astype(str).str.contains(
-                        search_quote, case=False, na=False
-                    )
+                    filtered_df["Quote Number"].astype(str).str.contains(search_quote, case=False, na=False)
                 ]
 
             if search_customer:
                 filtered_df = filtered_df[
-                    filtered_df["Customer"].astype(str).str.contains(
-                        search_customer, case=False, na=False
-                    )
+                    filtered_df["Customer"].astype(str).str.contains(search_customer, case=False, na=False)
                 ]
 
             if search_po:
                 filtered_df = filtered_df[
-                    filtered_df["PO Number"].astype(str).str.contains(
-                        search_po, case=False, na=False
-                    )
+                    filtered_df["PO Number"].astype(str).str.contains(search_po, case=False, na=False)
                 ]
 
             if search_status != "All":
-                filtered_df = filtered_df[
-                    filtered_df["Job Status"].astype(str) == search_status
-                ]
+                filtered_df = filtered_df[filtered_df["Job Status"].astype(str) == search_status]
 
-            filtered_df = filtered_df.drop(
-                columns=["Parsed Due Date", "Paid Blank"],
-                errors="ignore"
-            )
+            display_df = filtered_df.drop(columns=["Parsed Due Date", "Paid Blank"], errors="ignore").copy()
 
-            display_df = filtered_df.copy()
-
-            for money_col in ["Subtotal", "GST", "Total"]:
-                display_df[money_col] = display_df[money_col].apply(
-                    lambda x: f"${x:,.2f}"
-                )
+            for money_col in MONEY_COLUMNS:
+                display_df[money_col] = display_df[money_col].apply(lambda value: f"${clean_money(value):,.2f}")
 
             st.subheader("Quote Results")
             st.dataframe(display_df, use_container_width=True)
 
-            if overdue_invoices > 0:
-                overdue_display_df = overdue_df.drop(
-                    columns=["Parsed Due Date", "Paid Blank"],
-                    errors="ignore"
-                ).copy()
+            if len(overdue_df) > 0:
+                overdue_display_df = overdue_df.drop(columns=["Parsed Due Date", "Paid Blank"], errors="ignore").copy()
 
-                for money_col in ["Subtotal", "GST", "Total"]:
+                for money_col in MONEY_COLUMNS:
                     overdue_display_df[money_col] = overdue_display_df[money_col].apply(
-                        lambda x: f"${x:,.2f}"
+                        lambda value: f"${clean_money(value):,.2f}"
                     )
 
                 st.subheader("Overdue Invoices")
                 st.dataframe(overdue_display_df, use_container_width=True)
 
-    except Exception as e:
+    except Exception as exc:
         st.error("Dashboard failed to load.")
-        st.error(e)
+        st.error(exc)
 
 
 with tab_create:
     st.subheader("Quote Details")
 
-    auto_quote_number = generate_hebrew_quote_number()
-
-    quote_number = st.text_input("Quote Number", value=auto_quote_number)
-    revision = st.text_input("Revision", "0")
-
-    quote_reference = f"{quote_number}-R{revision}"
-    st.info(f"Quote Reference: {quote_reference}")
-
-    st.subheader("Internal Workflow Tracking")
-
-    job_status = st.selectbox("Job Status", STATUS_OPTIONS)
-
-    po_number = st.text_input("PO Number")
-    invoice_number = st.text_input("Invoice Number")
-
-    quote_released_date = st.date_input("Date Quote Released", value=None)
-    po_received_date = st.date_input("Date PO Received", value=None)
-    item_delivered_date = st.date_input("Date Item Delivered", value=None)
-    invoice_sent_date = st.date_input("Date Invoice Sent", value=None)
-    invoice_due_date = st.date_input("Invoice Due Date", value=None)
-    invoice_paid_date = st.date_input("Date Invoice Paid", value=None)
-    job_completed_date = st.date_input("Date Job Completed", value=None)
-
-    st.subheader("Customer Details")
-
-    selected_customer = st.selectbox("Customer Contact", customers_db["Contact Name"])
-
-    customer_row = customers_db[
-        customers_db["Contact Name"] == selected_customer
-    ].iloc[0]
-
-    department = customer_row["Department"]
-    company = customer_row["Company"]
-    address = customer_row["Address"]
-    city_state = customer_row["City/State"]
-
-    customer_email = ""
-    if "Email" in customers_db.columns:
-        customer_email = str(customer_row["Email"])
-
-    st.write(f"Name: {selected_customer}")
-    st.write(f"Department: {department}")
-    st.write(f"Company: {company}")
-    st.write(f"Address: {address}")
-    st.write(f"City/State: {city_state}")
-
-    if customer_email:
-        st.write(f"Email: {customer_email}")
-
-    scope = st.text_area("Scope of Work")
-
-    st.subheader("Items")
-
-    item_count = st.number_input(
-        "Number of item rows",
-        min_value=1,
-        max_value=20,
-        value=3
-    )
-
-    items = []
-
-    for i in range(item_count):
-        st.markdown(f"### Item {i + 1}")
-
-        part_no = st.text_input(f"Part Number {i + 1}", key=f"part{i}")
-        description = st.text_input(f"Description {i + 1}", key=f"desc{i}")
-
-        qty = st.number_input(
-            f"Qty {i + 1}",
-            min_value=0,
-            value=0,
-            key=f"qty{i}"
-        )
-
-        unit_price = st.number_input(
-            f"Unit Price {i + 1}",
-            min_value=0.0,
-            value=0.0,
-            key=f"price{i}"
-        )
-
-        if qty > 0:
-            total = qty * unit_price
-
-            items.append({
-                "part_no": part_no,
-                "description": description,
-                "qty": qty,
-                "unit_price": unit_price,
-                "total": total
-            })
-
-    subtotal = sum(item["total"] for item in items)
-    gst = subtotal * 0.10
-    grand_total = subtotal + gst
-
-    st.subheader("Totals")
-    st.write(f"Subtotal: ${subtotal:,.2f}")
-    st.write(f"GST: ${gst:,.2f}")
-    st.write(f"Grand Total: ${grand_total:,.2f}")
-
-    def create_excel_quote():
-        wb = load_workbook("rme_excel_template.xlsx")
-        ws = wb.active
-
-        ws["F8"] = quote_number
-        ws["K8"] = revision
-        ws["F9"] = datetime.today().strftime("%d/%m/%Y")
-
-        ws["C13"] = selected_customer
-        ws["C14"] = department
-        ws["C15"] = company
-        ws["C16"] = address
-        ws["C17"] = city_state
-
-        ws["B20"] = scope
-
-        start_row = 26
-
-        for index, item in enumerate(items):
-            row = start_row + index
-
-            ws[f"B{row}"] = item["part_no"]
-            ws[f"C{row}"] = item["description"]
-            ws[f"K{row}"] = item["qty"]
-            ws[f"L{row}"] = item["unit_price"]
-            ws[f"M{row}"] = item["total"]
-
-            ws[f"L{row}"].number_format = '$#,##0.00'
-            ws[f"M{row}"].number_format = '$#,##0.00'
-
-        ws["L38"] = subtotal
-        ws["L39"] = gst
-        ws["L40"] = grand_total
-
-        ws["L38"].number_format = '$#,##0.00'
-        ws["L39"].number_format = '$#,##0.00'
-        ws["L40"].number_format = '$#,##0.00'
-
-        excel_buffer = BytesIO()
-        wb.save(excel_buffer)
-        excel_buffer.seek(0)
-
-        return excel_buffer
-
-    def create_pdf_quote():
-        pdf_buffer = BytesIO()
-
-        doc = SimpleDocTemplate(
-            pdf_buffer,
-            pagesize=landscape(A4),
-            rightMargin=30,
-            leftMargin=30,
-            topMargin=30,
-            bottomMargin=30
-        )
-
-        styles = getSampleStyleSheet()
-        elements = []
-
-        elements.append(Paragraph("Rail and Marine Engineering Pty Ltd", styles["Title"]))
-        elements.append(Paragraph(
-            "ACN 656374373 | ABN 82656374373 | Bibra Lake, Western Australia",
-            styles["Normal"]
-        ))
-        elements.append(Spacer(1, 12))
-
-        elements.append(Paragraph(f"Quotation: {quote_number} Rev {revision}", styles["Heading2"]))
-        elements.append(Paragraph(f"Date: {datetime.today().strftime('%d/%m/%Y')}", styles["Normal"]))
-        elements.append(Spacer(1, 12))
-
-        customer_text = f"""
-        <b>Customer</b><br/>
-        Name: {selected_customer}<br/>
-        Department: {department}<br/>
-        Company: {company}<br/>
-        Address: {address}<br/>
-        City/State: {city_state}
-        """
-        elements.append(Paragraph(customer_text, styles["Normal"]))
-        elements.append(Spacer(1, 12))
-
-        elements.append(Paragraph("<b>Description of work, scope and conditions</b>", styles["Normal"]))
-        elements.append(Paragraph(scope, styles["Normal"]))
-        elements.append(Spacer(1, 12))
-
-        table_data = [["RME P/N", "Description", "Qty", "$ per unit", "$ Value"]]
-
-        for item in items:
-            table_data.append([
-                item["part_no"],
-                item["description"],
-                item["qty"],
-                f"${item['unit_price']:,.2f}",
-                f"${item['total']:,.2f}"
-            ])
-
-        table_data.append(["", "", "", "Sub Total", f"${subtotal:,.2f}"])
-        table_data.append(["", "", "", "10% GST", f"${gst:,.2f}"])
-        table_data.append(["", "", "", "Total including GST", f"${grand_total:,.2f}"])
-
-        table = Table(table_data, colWidths=[90, 300, 60, 100, 100])
-
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.black),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-            ("ALIGN", (2, 1), (-1, -1), "CENTER"),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ]))
-
-        elements.append(table)
-        elements.append(Spacer(1, 20))
-
-        elements.append(Paragraph("Contact Details", styles["Heading3"]))
-        elements.append(Paragraph(
-            "Rohit Saini | Mechanical Engineer | +610481247284 | rohit@rmerail.com",
-            styles["Normal"]
-        ))
-
-        doc.build(elements)
-
-        pdf_buffer.seek(0)
-        return pdf_buffer
-
-    if st.button("Generate Quote"):
-        excel_file = create_excel_quote()
-        pdf_file = create_pdf_quote()
-
-        history_row = [
-            quote_number,
-            revision,
-            datetime.today().strftime("%d/%m/%Y"),
-            selected_customer,
-            department,
-            company,
-            job_status,
-            po_number,
-            invoice_number,
-            format_date(quote_released_date),
-            format_date(po_received_date),
-            format_date(item_delivered_date),
-            format_date(invoice_sent_date),
-            format_date(invoice_due_date),
-            format_date(invoice_paid_date),
-            format_date(job_completed_date),
-            subtotal,
-            gst,
-            grand_total
-        ]
-
+    if customers_load_error is not None:
+        st.error("Customer database could not be loaded.")
+        st.error(customers_load_error)
+    else:
         try:
-            sheet = connect_google_sheet()
-            sheet.append_row(history_row, value_input_option="USER_ENTERED")
-            st.success("Quote generated and saved to Google Sheets")
-        except Exception as e:
-            st.warning("Quote generated, but Google Sheet save failed.")
-            st.error(e)
+            register_for_numbering = get_register_dataframe()
+            auto_quote_number = generate_next_quote_number(register_for_numbering)
+        except Exception as exc:
+            auto_quote_number = generate_next_quote_number()
+            st.warning("Could not check Google Sheets for the next available quote number.")
+            st.error(exc)
 
-        st.download_button(
-            label="Download Quote Excel",
-            data=excel_file,
-            file_name=f"RME_Quote_{quote_reference}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        quote_number = st.text_input("Quote Number", value=auto_quote_number)
+        revision = st.text_input("Revision", "0")
+
+        quote_reference = f"{clean_text(quote_number)}-R{clean_text(revision)}"
+        st.info(f"Quote Reference: {quote_reference}")
+
+        st.subheader("Internal Workflow Tracking")
+
+        job_status = st.selectbox("Job Status", STATUS_OPTIONS)
+        po_number = st.text_input("PO Number")
+        invoice_number = st.text_input("Invoice Number")
+
+        quote_released_date = st.date_input("Date Quote Released", value=None)
+        po_received_date = st.date_input("Date PO Received", value=None)
+        item_delivered_date = st.date_input("Date Item Delivered", value=None)
+        invoice_sent_date = st.date_input("Date Invoice Sent", value=None)
+        invoice_due_date = st.date_input("Invoice Due Date", value=None)
+        invoice_paid_date = st.date_input("Date Invoice Paid", value=None)
+        job_completed_date = st.date_input("Date Job Completed", value=None)
+
+        st.subheader("Customer Details")
+
+        customer_names = customers_db["Contact Name"].astype(str).tolist()
+        selected_customer = st.selectbox("Customer Contact", customer_names)
+
+        customer_row = customers_db[
+            customers_db["Contact Name"].astype(str) == selected_customer
+        ].iloc[0]
+
+        department = clean_text(customer_row["Department"])
+        company = clean_text(customer_row["Company"])
+        address = clean_text(customer_row["Address"])
+        city_state = clean_text(customer_row["City/State"])
+        customer_email = clean_text(customer_row["Email"]) if "Email" in customers_db.columns else ""
+
+        st.write(f"Name: {selected_customer}")
+        st.write(f"Department: {department}")
+        st.write(f"Company: {company}")
+        st.write(f"Address: {address}")
+        st.write(f"City/State: {city_state}")
+
+        if customer_email:
+            st.write(f"Email: {customer_email}")
+
+        scope = st.text_area("Scope of Work")
+
+        st.subheader("Items")
+
+        item_count = st.number_input(
+            "Number of item rows",
+            min_value=1,
+            max_value=MAX_ITEM_ROWS,
+            value=3
         )
 
-        st.download_button(
-            label="Download Quote PDF",
-            data=pdf_file,
-            file_name=f"RME_Quote_{quote_reference}.pdf",
-            mime="application/pdf"
-        )
+        items = []
 
-        st.subheader("Email Quote")
+        for i in range(item_count):
+            st.markdown(f"### Item {i + 1}")
 
-        email_to = st.text_input("Send to email", value=customer_email)
-        email_subject = st.text_input(
-            "Email subject",
-            value=f"RME Quotation {quote_reference}"
-        )
-        email_body = st.text_area(
-            "Email body",
-            value=f"""Hi,
+            part_no = st.text_input(f"Part Number {i + 1}", key=f"part{i}")
+            description = st.text_input(f"Description {i + 1}", key=f"desc{i}")
 
-Please find attached RME quotation {quote_reference}.
+            qty = st.number_input(f"Qty {i + 1}", min_value=0, value=0, key=f"qty{i}")
+            unit_price = st.number_input(f"Unit Price {i + 1}", min_value=0.0, value=0.0, key=f"price{i}")
+
+            if qty > 0:
+                items.append({
+                    "part_no": clean_text(part_no),
+                    "description": clean_text(description),
+                    "qty": qty,
+                    "unit_price": unit_price,
+                    "total": qty * unit_price
+                })
+
+        subtotal = sum(item["total"] for item in items)
+        gst = subtotal * 0.10
+        grand_total = subtotal + gst
+
+        st.subheader("Totals")
+        st.write(f"Subtotal: ${subtotal:,.2f}")
+        st.write(f"GST: ${gst:,.2f}")
+        st.write(f"Grand Total: ${grand_total:,.2f}")
+
+        if st.button("Generate Quote"):
+            validation_errors = []
+
+            if not clean_text(quote_number):
+                validation_errors.append("Quote Number is required.")
+
+            if not clean_text(revision):
+                validation_errors.append("Revision is required.")
+
+            if not items:
+                validation_errors.append("Add at least one item with a quantity greater than zero.")
+
+            duplicate_found = False
+
+            if not validation_errors:
+                try:
+                    duplicate_found = quote_revision_exists(
+                        get_register_dataframe(),
+                        quote_number,
+                        revision
+                    )
+                except Exception as exc:
+                    st.warning("Could not check for duplicate quote numbers before generating.")
+                    st.error(exc)
+
+            if duplicate_found:
+                validation_errors.append(f"Quote {quote_reference} already exists in the register.")
+
+            if validation_errors:
+                for error in validation_errors:
+                    st.error(error)
+            else:
+                try:
+                    excel_bytes = create_excel_quote(
+                        quote_number, revision, selected_customer, department, company,
+                        address, city_state, scope, items, subtotal, gst, grand_total
+                    )
+
+                    pdf_bytes = create_pdf_quote(
+                        quote_number, revision, selected_customer, department, company,
+                        address, city_state, scope, items, subtotal, gst, grand_total
+                    )
+
+                    history_row = [
+                        clean_text(quote_number),
+                        clean_text(revision),
+                        datetime.today().strftime("%d/%m/%Y"),
+                        selected_customer,
+                        department,
+                        company,
+                        job_status,
+                        clean_text(po_number),
+                        clean_text(invoice_number),
+                        format_date(quote_released_date),
+                        format_date(po_received_date),
+                        format_date(item_delivered_date),
+                        format_date(invoice_sent_date),
+                        format_date(invoice_due_date),
+                        format_date(invoice_paid_date),
+                        format_date(job_completed_date),
+                        subtotal,
+                        gst,
+                        grand_total
+                    ]
+
+                    try:
+                        append_register_row(history_row)
+                        st.success("Quote generated and saved to Google Sheets.")
+                    except Exception as exc:
+                        st.warning("Quote generated, but Google Sheets save failed.")
+                        st.error(exc)
+
+                    generation_token = datetime.now().strftime("%Y%m%d%H%M%S%f")
+
+                    st.session_state["generated_quote"] = {
+                        "quote_reference": quote_reference,
+                        "excel_bytes": excel_bytes,
+                        "pdf_bytes": pdf_bytes,
+                        "excel_filename": f"RME_Quote_{quote_reference}.xlsx",
+                        "pdf_filename": f"RME_Quote_{quote_reference}.pdf",
+                        "customer_email": customer_email,
+                        "generation_token": generation_token
+                    }
+
+                except Exception as exc:
+                    st.error("Quote generation failed.")
+                    st.error(exc)
+
+        generated_quote = st.session_state.get("generated_quote")
+
+        if generated_quote:
+            st.subheader("Generated Quote")
+
+            st.download_button(
+                label="Download Quote Excel",
+                data=generated_quote["excel_bytes"],
+                file_name=generated_quote["excel_filename"],
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"excel_download_{generated_quote['generation_token']}"
+            )
+
+            st.download_button(
+                label="Download Quote PDF",
+                data=generated_quote["pdf_bytes"],
+                file_name=generated_quote["pdf_filename"],
+                mime="application/pdf",
+                key=f"pdf_download_{generated_quote['generation_token']}"
+            )
+
+            st.subheader("Email Quote")
+
+            with st.form(f"email_quote_form_{generated_quote['generation_token']}"):
+                email_to = st.text_input("Send to email", value=generated_quote["customer_email"])
+                email_subject = st.text_input(
+                    "Email subject",
+                    value=f"RME Quotation {generated_quote['quote_reference']}"
+                )
+                email_body = st.text_area(
+                    "Email body",
+                    value=f"""Hi,
+
+Please find attached RME quotation {generated_quote['quote_reference']}.
 
 Regards,
 Rohit Saini
 Rail and Marine Engineering Pty Ltd"""
-        )
-
-        if st.button("Send Quote Email"):
-            try:
-                send_email_with_pdf(
-                    email_to,
-                    email_subject,
-                    email_body,
-                    pdf_file,
-                    f"RME_Quote_{quote_reference}.pdf"
                 )
-                st.success("Email sent successfully.")
-            except Exception as e:
-                st.error("Email sending failed.")
-                st.error(e)
+                send_email = st.form_submit_button("Send Quote Email")
+
+            if send_email:
+                if not clean_text(email_to):
+                    st.error("Recipient email address is required.")
+                else:
+                    try:
+                        send_email_with_pdf(
+                            clean_text(email_to),
+                            email_subject,
+                            email_body,
+                            generated_quote["pdf_bytes"],
+                            generated_quote["pdf_filename"]
+                        )
+                        st.success("Email sent successfully.")
+                    except Exception as exc:
+                        st.error("Email sending failed.")
+                        st.error(exc)
 
 
 with tab_update:
@@ -626,34 +875,23 @@ with tab_update:
 
         if register_df.empty:
             st.write("No quote records found.")
-
         else:
-            register_df["Quote Display"] = (
-                register_df["Quote Number"].astype(str)
-                + "-R"
-                + register_df["Revision"].astype(str)
-            )
-
-            quote_options = register_df["Quote Display"].tolist()
-
-            selected_quote_display = st.selectbox(
+            selected_row_index = st.selectbox(
                 "Select Quote",
-                quote_options
+                register_df.index.tolist(),
+                format_func=lambda row_index: format_quote_option(register_df, row_index)
             )
 
-            selected_record = register_df[
-                register_df["Quote Display"] == selected_quote_display
-            ].iloc[0]
+            selected_record = register_df.loc[selected_row_index]
 
-            selected_quote_number = str(selected_record.get("Quote Number", ""))
-            selected_revision = str(selected_record.get("Revision", ""))
+            selected_quote_number = clean_text(selected_record.get("Quote Number", ""))
+            selected_revision = clean_text(selected_record.get("Revision", ""))
 
-            st.write("Customer:", selected_record.get("Customer", ""))
-            st.write("Company:", selected_record.get("Company", ""))
-            st.write("Current Status:", selected_record.get("Job Status", ""))
+            st.write("Customer:", clean_text(selected_record.get("Customer", "")))
+            st.write("Company:", clean_text(selected_record.get("Company", "")))
+            st.write("Current Status:", clean_text(selected_record.get("Job Status", "")))
 
-            current_status = selected_record.get("Job Status", "Draft")
-
+            current_status = clean_text(selected_record.get("Job Status", "Draft"))
             if current_status not in STATUS_OPTIONS:
                 current_status = "Draft"
 
@@ -663,84 +901,49 @@ with tab_update:
                 index=STATUS_OPTIONS.index(current_status)
             )
 
-            updated_po_number = st.text_input(
-                "Update PO Number",
-                value=str(selected_record.get("PO Number", ""))
-            )
+            updated_po_number = st.text_input("Update PO Number", value=clean_text(selected_record.get("PO Number", "")))
+            updated_invoice_number = st.text_input("Update Invoice Number", value=clean_text(selected_record.get("Invoice Number", "")))
 
-            updated_invoice_number = st.text_input(
-                "Update Invoice Number",
-                value=str(selected_record.get("Invoice Number", ""))
-            )
-
-            update_quote_released_date = st.text_input(
-                "Quote Released Date",
-                value=str(selected_record.get("Quote Released Date", ""))
-            )
-
-            update_po_received_date = st.text_input(
-                "PO Received Date",
-                value=str(selected_record.get("PO Received Date", ""))
-            )
-
-            update_item_delivered_date = st.text_input(
-                "Item Delivered Date",
-                value=str(selected_record.get("Item Delivered Date", ""))
-            )
-
-            update_invoice_sent_date = st.text_input(
-                "Invoice Sent Date",
-                value=str(selected_record.get("Invoice Sent Date", ""))
-            )
-
-            update_invoice_due_date = st.text_input(
-                "Invoice Due Date",
-                value=str(selected_record.get("Invoice Due Date", ""))
-            )
-
-            update_invoice_paid_date = st.text_input(
-                "Invoice Paid Date",
-                value=str(selected_record.get("Invoice Paid Date", ""))
-            )
-
-            update_job_completed_date = st.text_input(
-                "Job Completed Date",
-                value=str(selected_record.get("Job Completed Date", ""))
-            )
+            update_quote_released_date = st.text_input("Quote Released Date", value=clean_text(selected_record.get("Quote Released Date", "")))
+            update_po_received_date = st.text_input("PO Received Date", value=clean_text(selected_record.get("PO Received Date", "")))
+            update_item_delivered_date = st.text_input("Item Delivered Date", value=clean_text(selected_record.get("Item Delivered Date", "")))
+            update_invoice_sent_date = st.text_input("Invoice Sent Date", value=clean_text(selected_record.get("Invoice Sent Date", "")))
+            update_invoice_due_date = st.text_input("Invoice Due Date", value=clean_text(selected_record.get("Invoice Due Date", "")))
+            update_invoice_paid_date = st.text_input("Invoice Paid Date", value=clean_text(selected_record.get("Invoice Paid Date", "")))
+            update_job_completed_date = st.text_input("Job Completed Date", value=clean_text(selected_record.get("Job Completed Date", "")))
 
             if st.button("Update Quote Register"):
-
                 today_string = datetime.today().strftime("%d/%m/%Y")
 
                 update_values = {
                     "Job Status": updated_job_status,
-                    "PO Number": updated_po_number,
-                    "Invoice Number": updated_invoice_number,
-                    "Quote Released Date": update_quote_released_date,
-                    "PO Received Date": update_po_received_date,
-                    "Item Delivered Date": update_item_delivered_date,
-                    "Invoice Sent Date": update_invoice_sent_date,
-                    "Invoice Due Date": update_invoice_due_date,
-                    "Invoice Paid Date": update_invoice_paid_date,
-                    "Job Completed Date": update_job_completed_date
+                    "PO Number": clean_text(updated_po_number),
+                    "Invoice Number": clean_text(updated_invoice_number),
+                    "Quote Released Date": clean_text(update_quote_released_date),
+                    "PO Received Date": clean_text(update_po_received_date),
+                    "Item Delivered Date": clean_text(update_item_delivered_date),
+                    "Invoice Sent Date": clean_text(update_invoice_sent_date),
+                    "Invoice Due Date": clean_text(update_invoice_due_date),
+                    "Invoice Paid Date": clean_text(update_invoice_paid_date),
+                    "Job Completed Date": clean_text(update_job_completed_date)
                 }
 
-                if updated_job_status == "Released" and not update_quote_released_date:
+                if updated_job_status == "Released" and not update_values["Quote Released Date"]:
                     update_values["Quote Released Date"] = today_string
 
-                if updated_job_status == "PO Received" and not update_po_received_date:
+                if updated_job_status == "PO Received" and not update_values["PO Received Date"]:
                     update_values["PO Received Date"] = today_string
 
-                if updated_job_status == "Items Delivered" and not update_item_delivered_date:
+                if updated_job_status == "Items Delivered" and not update_values["Item Delivered Date"]:
                     update_values["Item Delivered Date"] = today_string
 
-                if updated_job_status == "Invoice Sent" and not update_invoice_sent_date:
+                if updated_job_status == "Invoice Sent" and not update_values["Invoice Sent Date"]:
                     update_values["Invoice Sent Date"] = today_string
 
-                if updated_job_status == "Paid" and not update_invoice_paid_date:
+                if updated_job_status == "Paid" and not update_values["Invoice Paid Date"]:
                     update_values["Invoice Paid Date"] = today_string
 
-                if updated_job_status == "Completed" and not update_job_completed_date:
+                if updated_job_status == "Completed" and not update_values["Job Completed Date"]:
                     update_values["Job Completed Date"] = today_string
 
                 success = update_register_row(
@@ -754,9 +957,9 @@ with tab_update:
                 else:
                     st.error("Quote number/revision not found in register.")
 
-    except Exception as e:
+    except Exception as exc:
         st.error("Could not load quote register.")
-        st.error(e)
+        st.error(exc)
 
 
 with tab_register:
@@ -768,9 +971,9 @@ with tab_register:
         if not register_df.empty:
             display_register_df = register_df.copy()
 
-            for money_col in ["Subtotal", "GST", "Total"]:
+            for money_col in MONEY_COLUMNS:
                 display_register_df[money_col] = display_register_df[money_col].apply(
-                    lambda x: f"${clean_money(x):,.2f}"
+                    lambda value: f"${clean_money(value):,.2f}"
                 )
 
             st.dataframe(display_register_df, use_container_width=True)
@@ -783,10 +986,9 @@ with tab_register:
                 file_name="rme_quote_register.csv",
                 mime="text/csv"
             )
-
         else:
             st.write("No quote records found yet.")
 
-    except Exception as e:
+    except Exception as exc:
         st.write("Quote register will appear here after Google Sheets connection is active.")
-        st.error(e)
+        st.error(exc)
