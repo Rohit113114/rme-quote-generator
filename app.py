@@ -28,7 +28,7 @@ st.markdown(
     <style>
         .rme-header {
             background-color: #111827;
-            padding: 18px 28px;
+            padding: 12px 24px;
             border-radius: 10px;
             display: flex;
             align-items: center;
@@ -37,7 +37,7 @@ st.markdown(
         }
 
         .rme-header img {
-            width: 160px;
+            width: 130px;
         }
 
         .rme-header-title {
