@@ -23,13 +23,16 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 st.set_page_config(page_title="RME Commercial Dashboard", layout="wide")
 
-col_logo, col_title = st.columns([1, 5])
+col_logo, col_title = st.columns([1.5, 6])
 
 with col_logo:
-    st.image("rme_logo.png", width=120)
+    st.image("rme_logo.png", width=180)
 
 with col_title:
-    st.title("RME Commercial Dashboard")
+    st.markdown(
+        "<h1 style='padding-top:20px;'>RME Commercial Dashboard</h1>",
+        unsafe_allow_html=True
+    )
 
 
 CUSTOMERS_FILE = Path("customers.xlsx")
