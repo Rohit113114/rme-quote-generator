@@ -23,16 +23,47 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 st.set_page_config(page_title="RME Commercial Dashboard", layout="wide")
 
-col_logo, col_title = st.columns([1.5, 6])
+st.markdown(
+    """
+    <style>
+        .rme-header {
+            background-color: #111827;
+            padding: 18px 28px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            gap: 30px;
+            margin-bottom: 25px;
+        }
 
-with col_logo:
-    st.image("rme_logo.png", width=180)
+        .rme-header img {
+            width: 160px;
+        }
 
-with col_title:
-    st.markdown(
-        "<h1 style='padding-top:20px;'>RME Commercial Dashboard</h1>",
-        unsafe_allow_html=True
-    )
+        .rme-header-title {
+            color: white;
+            font-size: 34px;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .rme-header-subtitle {
+            color: #D1D5DB;
+            font-size: 14px;
+            margin-top: 4px;
+        }
+    </style>
+
+    <div class="rme-header">
+        <img src="https://raw.githubusercontent.com/Rohit113114/rme-quote-generator/main/rme_logo.png">
+        <div>
+            <div class="rme-header-title">RME Commercial Dashboard</div>
+            <div class="rme-header-subtitle">Quotation • Workflow • PO • Invoice Tracking</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 
 CUSTOMERS_FILE = Path("customers.xlsx")
