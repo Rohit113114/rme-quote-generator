@@ -22,7 +22,14 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 
 st.set_page_config(page_title="RME Commercial Dashboard", layout="wide")
-st.title("RME Commercial Dashboard")
+
+col_logo, col_title = st.columns([1, 5])
+
+with col_logo:
+    st.image("rme_logo.png", width=120)
+
+with col_title:
+    st.title("RME Commercial Dashboard")
 
 
 CUSTOMERS_FILE = Path("customers.xlsx")
