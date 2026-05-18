@@ -1072,9 +1072,21 @@ with tab_update:
                 wb = load_workbook(INVOICE_TEMPLATE_FILE)
                 ws = wb.active
 
-                subtotal = clean_money(selected_record.get("Subtotal", 0))
-                gst = clean_money(selected_record.get("GST", 0))
-                total = clean_money(selected_record.get("Total", 0))
+            if invoice_items:
+            
+                subtotal = sum(
+                    clean_money(item.get("Line Total", 0))
+                    for item in invoice_items
+                )
+            
+            else:
+            
+                subtotal = clean_money(
+                    selected_invoice_record.get("Subtotal", 0)
+                )
+            
+            gst = subtotal * 0.10
+            total = subtotal + gst
 
                 part_description = f"Quotation {selected_quote_number}-R{selected_revision}"
 
@@ -1259,9 +1271,21 @@ invoices@fortescue.com"""
                 wb = load_workbook(INVOICE_TEMPLATE_FILE)
                 ws = wb.active
 
-                subtotal = clean_money(selected_invoice_record.get("Subtotal", 0))
-                gst = clean_money(selected_invoice_record.get("GST", 0))
-                total = clean_money(selected_invoice_record.get("Total", 0))
+            if invoice_items:
+            
+                subtotal = sum(
+                    clean_money(item.get("Line Total", 0))
+                    for item in invoice_items
+                )
+            
+            else:
+            
+                subtotal = clean_money(
+                    selected_invoice_record.get("Subtotal", 0)
+                )
+            
+            gst = subtotal * 0.10
+            total = subtotal + gst
 
                 ws["F10"] = invoice_number
                 ws["F11"] = datetime.today().strftime("%d/%m/%Y")
@@ -1289,9 +1313,14 @@ invoices@fortescue.com"""
                         ws[f"I{row}"] = clean_money(item.get("Qty", 0))
                         ws[f"J{row}"] = clean_money(item.get("Unit Price", 0))
                         ws[f"K{row}"] = clean_money(item.get("Line Total", 0))
-
+                        
                         ws[f"J{row}"].number_format = '$#,##0.00'
                         ws[f"K{row}"].number_format = '$#,##0.00'
+                        
+                        ws[f"B{row}"].alignment = Alignment(horizontal="left")
+                        ws[f"I{row}"].alignment = Alignment(horizontal="center")
+                        ws[f"J{row}"].alignment = Alignment(horizontal="right")
+                        ws[f"K{row}"].alignment = Alignment(horizontal="right")
 
                 else:
                     ws["B27"] = f"Quotation {invoice_quote_number}"
