@@ -373,8 +373,22 @@ def get_quote_items(quote_number, revision):
 
     matched_items = []
 
+    selected_quote_number = str(quote_number).strip()
+
+    try:
+        selected_revision = str(int(float(revision)))
+    except Exception:
+        selected_revision = str(revision).strip()
+
     for row in records:
-        if str(row.get("Quote Number")) == str(quote_number) and str(row.get("Revision")) == str(revision):
+        sheet_quote_number = str(row.get("Quote Number", "")).strip()
+
+        try:
+            sheet_revision = str(int(float(row.get("Revision", ""))))
+        except Exception:
+            sheet_revision = str(row.get("Revision", "")).strip()
+
+        if sheet_quote_number == selected_quote_number and sheet_revision == selected_revision:
             matched_items.append(row)
 
     return matched_items
