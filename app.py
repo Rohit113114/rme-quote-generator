@@ -125,7 +125,7 @@ STATUS_OPTIONS = [
     "Invoice Sent", "Paid", "Completed", "Closed"
 ]
 QUOTE_TEMPLATE_FILE = Path("templates/rme_excel_template.xlsx")
-INVOICE_TEMPLATE_FILE = Path("templates/invoice_template.xlsx")
+INVOICE_TEMPLATE_FILE = Path("invoice_template.xlsx")
 
 MONEY_COLUMNS = ["Subtotal", "GST", "Total"]
 
