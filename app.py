@@ -367,7 +367,7 @@ def save_quote_items(quote_number, revision, items):
         ], value_input_option="USER_ENTERED")
 
 
-def get_quote_items(quote_number, revision):
+def get_quote_items(quote_number):
     sheet = get_quote_items_sheet()
     records = sheet.get_all_records()
 
@@ -375,20 +375,10 @@ def get_quote_items(quote_number, revision):
 
     selected_quote_number = str(quote_number).strip()
 
-    try:
-        selected_revision = str(int(float(revision)))
-    except Exception:
-        selected_revision = str(revision).strip()
-
     for row in records:
         sheet_quote_number = str(row.get("Quote Number", "")).strip()
 
-        try:
-            sheet_revision = str(int(float(row.get("Revision", ""))))
-        except Exception:
-            sheet_revision = str(row.get("Revision", "")).strip()
-
-        if sheet_quote_number == selected_quote_number and sheet_revision == selected_revision:
+        if sheet_quote_number == selected_quote_number:
             matched_items.append(row)
 
     return matched_items
