@@ -1303,7 +1303,7 @@ invoices@fortescue.com"""
             ws["D19"] = invoice_address
             ws["D20"] = invoice_city_state
 
-                ws["I17"] = billing_address
+            ws["I17"] = billing_address
 
                 start_row = 27
 
