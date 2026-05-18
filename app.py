@@ -922,6 +922,8 @@ with tab_create:
                         selected_customer,
                         department,
                         company,
+                        address,
+                        city_state,
                         job_status,
                         clean_text(po_number),
                         clean_text(invoice_number),
@@ -1264,9 +1266,9 @@ invoices@fortescue.com"""
                 ws["F12"] = po_number_for_invoice
 
                 ws["B17"] = f"{invoice_customer} - {invoice_department}"
-                ws["D18"] = invoice_company
-                ws["D19"] = invoice_address
-                ws["D20"] = invoice_city_state
+                ws["D18"] = str(selected_invoice_record.get("Company", ""))
+                ws["D19"] = str(selected_invoice_record.get("Address", ""))
+                ws["D20"] = str(selected_invoice_record.get("City/State", ""))
 
                 ws["I17"] = billing_address
 
