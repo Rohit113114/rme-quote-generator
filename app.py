@@ -55,9 +55,6 @@ if not check_login():
     st.stop()
 
 
-if not check_password():
-    st.stop()
-
 st.markdown(
     """
     <style>
