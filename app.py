@@ -23,6 +23,30 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 st.set_page_config(page_title="RME Commercial Dashboard", layout="wide")
 
+def check_password():
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
+
+    if st.session_state["password_correct"]:
+        return True
+
+    st.title("RME Commercial Dashboard Login")
+
+    password = st.text_input("Enter password", type="password")
+
+    if st.button("Login"):
+        if password == st.secrets["auth"]["password"]:
+            st.session_state["password_correct"] = True
+            st.rerun()
+        else:
+            st.error("Incorrect password")
+
+    return False
+
+
+if not check_password():
+    st.stop()
+
 st.markdown(
     """
     <style>
