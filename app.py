@@ -55,6 +55,13 @@ if not check_login():
     st.stop()
 
 
+col1, col2 = st.columns([9, 1])
+
+with col2:
+    if st.button("Logout"):
+        st.session_state["logged_in"] = False
+        st.rerun()
+        
 st.markdown(
     """
     <style>
