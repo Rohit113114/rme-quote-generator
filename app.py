@@ -1279,8 +1279,17 @@ invoices@fortescue.com"""
                     for index, item in enumerate(invoice_items):
                         row = start_row + index
 
-                        part_number = str(item.get("Part Number", "")).strip()
-                        description = str(item.get("Description", "")).strip()
+                        part_number = ""
+                        description = ""
+                        
+                        for key, value in item.items():
+                            clean_key = str(key).strip()
+                        
+                            if clean_key == "Part Number":
+                                part_number = str(value).strip()
+                        
+                            if clean_key == "Description":
+                                description = str(value).strip()
                         
                         invoice_description = f"{part_number} - {description}".strip(" -")
 
