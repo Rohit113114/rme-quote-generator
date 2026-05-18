@@ -352,6 +352,7 @@ def get_quote_items_sheet():
 
 
 def save_quote_items(quote_number, revision, items):
+    st.info(f"Saved {len(items)} item lines to Quote Items")
     sheet = get_quote_items_sheet()
 
     for item in items:
