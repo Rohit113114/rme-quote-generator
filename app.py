@@ -144,8 +144,8 @@ def is_blank(value):
 def clean_text(value):
     return "" if is_blank(value) else str(value).strip()
 
-def generate_invoice_number(quote_number, revision):
-    return f"INV{quote_number}R{revision}"
+def generate_invoice_number(quote_number):
+    return f"INV{quote_number}"
     
 def clean_money(value):
     if is_blank(value):
@@ -322,6 +322,62 @@ def get_register_dataframe():
 
     return register_df[ordered_columns]
 
+def get_workbook():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+
+    credentials = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=scopes
+    )
+
+    client = gspread.authorize(credentials)
+    return client.open("RME Quote Register")
+
+
+def get_quote_items_sheet():
+    workbook = get_workbook()
+
+    try:
+        return workbook.worksheet("Quote Items")
+    except Exception:
+        sheet = workbook.add_worksheet(title="Quote Items", rows=1000, cols=7)
+        sheet.append_row([
+            "Quote Number", "Revision", "Part Number", "Description",
+            "Qty", "Unit Price", "Line Total"
+        ])
+        return sheet
+
+
+def save_quote_items(quote_number, revision, items):
+    sheet = get_quote_items_sheet()
+
+    for item in items:
+        sheet.append_row([
+            quote_number,
+            revision,
+            item.get("part_no", ""),
+            item.get("description", ""),
+            item.get("qty", 0),
+            item.get("unit_price", 0),
+            item.get("total", 0)
+        ], value_input_option="USER_ENTERED")
+
+
+def get_quote_items(quote_number, revision):
+    sheet = get_quote_items_sheet()
+    records = sheet.get_all_records()
+
+    matched_items = []
+
+    for row in records:
+        if str(row.get("Quote Number")) == str(quote_number) and str(row.get("Revision")) == str(revision):
+            matched_items.append(row)
+
+    return matched_items
+
 
 def clear_register_cache():
     try:
@@ -341,6 +397,9 @@ def append_register_row(row_values):
         "Quote register save",
         lambda: sheet.append_row(aligned_row, value_input_option="USER_ENTERED")
     )
+    
+    save_quote_items(quote_number, revision, items)
+    
     clear_register_cache()
 
 
@@ -609,8 +668,8 @@ except Exception as exc:
     customers_load_error = exc
 
 
-tab_dashboard, tab_create, tab_update, tab_register = st.tabs(
-    ["Dashboard", "Create New Quote", "Update Existing Quote", "Quote Register"]
+tab_dashboard, tab_create, tab_update, tab_invoice, tab_register = st.tabs(
+    ["Dashboard", "Create New Quote", "Update Existing Quote", "Create Invoice", "Quote Register"]
 )
 
 
@@ -1105,6 +1164,161 @@ with tab_update:
         st.error("Could not load quote register.")
         st.error(exc)
 
+
+with tab_invoice:
+    st.subheader("Create Invoice")
+
+    try:
+        register_df = get_register_dataframe()
+
+        if register_df.empty:
+            st.write("No quote records found.")
+
+        else:
+            register_df["Quote Display"] = (
+                register_df["Quote Number"].astype(str)
+                + "-R"
+                + register_df["Revision"].astype(str)
+            )
+
+            selected_invoice_quote = st.selectbox(
+                "Select Quote to Invoice",
+                register_df["Quote Display"].tolist(),
+                key="invoice_quote_select"
+            )
+
+            selected_invoice_record = register_df[
+                register_df["Quote Display"] == selected_invoice_quote
+            ].iloc[0]
+
+            invoice_quote_number = str(selected_invoice_record.get("Quote Number", ""))
+            invoice_revision = str(selected_invoice_record.get("Revision", ""))
+
+            invoice_number = generate_invoice_number(invoice_quote_number)
+
+            st.info(f"Invoice Number: {invoice_number}")
+
+            st.subheader("Customer Details")
+
+            invoice_customer = str(selected_invoice_record.get("Customer", ""))
+            invoice_department = str(selected_invoice_record.get("Department", ""))
+            invoice_company = str(selected_invoice_record.get("Company", ""))
+
+            customer_match = customers_db[
+                customers_db["Contact Name"].astype(str) == invoice_customer
+            ]
+
+            if not customer_match.empty:
+                customer_invoice_row = customer_match.iloc[0]
+                invoice_address = str(customer_invoice_row.get("Address", ""))
+                invoice_city_state = str(customer_invoice_row.get("City/State", ""))
+            else:
+                invoice_address = ""
+                invoice_city_state = ""
+
+            st.write(f"Customer: {invoice_customer}")
+            st.write(f"Department: {invoice_department}")
+            st.write(f"Company: {invoice_company}")
+            st.write(f"Address: {invoice_address}")
+            st.write(f"City / State: {invoice_city_state}")
+
+            st.subheader("Billing Address")
+
+            billing_address = st.text_area(
+                "Billing Address",
+                value="""The Pilbara Infrastructure Pty Ltd
+Level 8, 256 St Georges Terrace
+PERTH
+WA 6000 Australia
+invoices@fortescue.com"""
+            )
+
+            po_number_for_invoice = st.text_input(
+                "Purchase Order Number",
+                value=str(selected_invoice_record.get("PO Number", ""))
+            )
+
+            invoice_items = get_quote_items(invoice_quote_number, invoice_revision)
+
+            st.subheader("Invoice Items")
+
+            if invoice_items:
+                st.dataframe(pd.DataFrame(invoice_items), use_container_width=True)
+            else:
+                st.warning("No saved item lines found for this quote. A summary invoice line will be used.")
+
+            def create_invoice_from_quote():
+                wb = load_workbook(INVOICE_TEMPLATE_FILE)
+                ws = wb.active
+
+                subtotal = clean_money(selected_invoice_record.get("Subtotal", 0))
+                gst = clean_money(selected_invoice_record.get("GST", 0))
+                total = clean_money(selected_invoice_record.get("Total", 0))
+
+                ws["F10"] = invoice_number
+                ws["F11"] = datetime.today().strftime("%d/%m/%Y")
+                ws["F12"] = po_number_for_invoice
+
+                ws["B17"] = f"{invoice_customer} - {invoice_department}"
+                ws["D18"] = invoice_company
+                ws["D19"] = invoice_address
+                ws["D20"] = invoice_city_state
+
+                ws["I17"] = billing_address
+
+                start_row = 27
+
+                if invoice_items:
+                    for index, item in enumerate(invoice_items):
+                        row = start_row + index
+
+                        part_number = str(item.get("Part Number", ""))
+                        description = str(item.get("Description", ""))
+
+                        invoice_description = f"{part_number} - {description}".strip(" -")
+
+                        ws[f"B{row}"] = invoice_description
+                        ws[f"I{row}"] = clean_money(item.get("Qty", 0))
+                        ws[f"J{row}"] = clean_money(item.get("Unit Price", 0))
+                        ws[f"K{row}"] = clean_money(item.get("Line Total", 0))
+
+                        ws[f"J{row}"].number_format = '$#,##0.00'
+                        ws[f"K{row}"].number_format = '$#,##0.00'
+
+                else:
+                    ws["B27"] = f"Quotation {invoice_quote_number}"
+                    ws["I27"] = 1
+                    ws["J27"] = subtotal
+                    ws["K27"] = subtotal
+
+                ws["K36"] = subtotal
+                ws["K37"] = gst
+                ws["K38"] = total
+
+                for cell in ["J27", "K27", "K36", "K37", "K38"]:
+                    ws[cell].number_format = '$#,##0.00'
+
+                excel_buffer = BytesIO()
+                wb.save(excel_buffer)
+                excel_buffer.seek(0)
+
+                return excel_buffer
+
+            if st.button("Generate Invoice Excel"):
+                invoice_file = create_invoice_from_quote()
+
+                st.success(f"Invoice generated: {invoice_number}")
+
+                st.download_button(
+                    label="Download Invoice Excel",
+                    data=invoice_file,
+                    file_name=f"RME_Invoice_{invoice_number}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+    except Exception as exc:
+        st.error("Could not generate invoice.")
+        st.error(exc)
 
 with tab_register:
     st.subheader("Quote Register")
