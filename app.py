@@ -1088,7 +1088,6 @@ with tab_update:
             gst = subtotal * 0.10
             total = subtotal + gst
 
-                part_description = f"Quotation {selected_quote_number}-R{selected_revision}"
 
                 ws["F10"] = invoice_number
                 ws["F11"] = datetime.today().strftime("%d/%m/%Y")
@@ -1099,7 +1098,22 @@ with tab_update:
                 ws["D19"] = str(selected_record.get("Address", ""))
                 ws["D20"] = str(selected_record.get("City/State", ""))
 
-                ws["B27"] = part_description
+            if invoice_items:
+                for index, item in enumerate(invoice_items):
+                    row = 27 + index
+            
+                    part_number = str(item.get("Part Number", ""))
+                    description = str(item.get("Description", ""))
+            
+                    ws[f"B{row}"] = f"{part_number} - {description}".strip(" -")
+                    ws[f"I{row}"] = clean_money(item.get("Qty", 0))
+                    ws[f"J{row}"] = clean_money(item.get("Unit Price", 0))
+                    ws[f"K{row}"] = clean_money(item.get("Line Total", 0))
+            
+                    ws[f"J{row}"].number_format = '$#,##0.00'
+                    ws[f"K{row}"].number_format = '$#,##0.00'
+            else:
+                ws["B27"] = f"Quotation {invoice_quote_number}"
                 ws["I27"] = 1
                 ws["J27"] = subtotal
                 ws["K27"] = subtotal
