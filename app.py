@@ -124,7 +124,7 @@ STATUS_OPTIONS = [
     "Draft", "Released", "PO Received", "Items Delivered",
     "Invoice Sent", "Paid", "Completed", "Closed"
 ]
-QUOTE_TEMPLATE_FILE = Path("templates/rme_excel_template.xlsx")
+QUOTE_TEMPLATE_FILE = Path("rme_excel_template.xlsx")
 INVOICE_TEMPLATE_FILE = Path("invoice_template.xlsx")
 
 MONEY_COLUMNS = ["Subtotal", "GST", "Total"]
