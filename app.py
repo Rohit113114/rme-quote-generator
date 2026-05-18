@@ -124,6 +124,8 @@ STATUS_OPTIONS = [
     "Draft", "Released", "PO Received", "Items Delivered",
     "Invoice Sent", "Paid", "Completed", "Closed"
 ]
+QUOTE_TEMPLATE_FILE = Path("templates/rme_excel_template.xlsx")
+INVOICE_TEMPLATE_FILE = Path("templates/invoice_template.xlsx")
 
 MONEY_COLUMNS = ["Subtotal", "GST", "Total"]
 
@@ -142,7 +144,9 @@ def is_blank(value):
 def clean_text(value):
     return "" if is_blank(value) else str(value).strip()
 
-
+def generate_invoice_number(quote_number, revision):
+    return f"INV{quote_number}R{revision}"
+    
 def clean_money(value):
     if is_blank(value):
         return 0.0
@@ -992,6 +996,48 @@ with tab_update:
             update_invoice_paid_date = st.text_input("Invoice Paid Date", value=clean_text(selected_record.get("Invoice Paid Date", "")))
             update_job_completed_date = st.text_input("Job Completed Date", value=clean_text(selected_record.get("Job Completed Date", "")))
 
+            def create_invoice_excel(selected_record):
+                invoice_number = generate_invoice_number(
+                    selected_quote_number,
+                    selected_revision
+                )
+
+                wb = load_workbook(INVOICE_TEMPLATE_FILE)
+                ws = wb.active
+
+                subtotal = clean_money(selected_record.get("Subtotal", 0))
+                gst = clean_money(selected_record.get("GST", 0))
+                total = clean_money(selected_record.get("Total", 0))
+
+                part_description = f"Quotation {selected_quote_number}-R{selected_revision}"
+
+                ws["F10"] = invoice_number
+                ws["F11"] = datetime.today().strftime("%d/%m/%Y")
+                ws["F12"] = updated_po_number
+
+                ws["B17"] = str(selected_record.get("Customer", "")) + " - " + str(selected_record.get("Department", ""))
+                ws["D18"] = str(selected_record.get("Company", ""))
+                ws["D19"] = str(selected_record.get("Address", ""))
+                ws["D20"] = str(selected_record.get("City/State", ""))
+
+                ws["B27"] = part_description
+                ws["I27"] = 1
+                ws["J27"] = subtotal
+                ws["K27"] = subtotal
+
+                ws["K36"] = subtotal
+                ws["K37"] = gst
+                ws["K38"] = total
+
+                for cell in ["J27", "K27", "K36", "K37", "K38"]:
+                    ws[cell].number_format = '$#,##0.00'
+
+                excel_buffer = BytesIO()
+                wb.save(excel_buffer)
+                excel_buffer.seek(0)
+
+                return excel_buffer, invoice_number
+                            
             if st.button("Update Quote Register"):
                 today_string = datetime.today().strftime("%d/%m/%Y")
 
@@ -1036,6 +1082,24 @@ with tab_update:
                     st.success("Quote register updated successfully.")
                 else:
                     st.error("Quote number/revision not found in register.")
+            
+            st.subheader("Invoice Generation")
+
+            if st.button("Generate Invoice Excel"):
+                invoice_file, generated_invoice_number = create_invoice_excel(
+                    selected_record
+                )
+
+                st.success(
+                    f"Invoice generated: {generated_invoice_number}"
+                )
+
+                st.download_button(
+                    label="Download Invoice Excel",
+                    data=invoice_file,
+                    file_name=f"RME_Invoice_{generated_invoice_number}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
     except Exception as exc:
         st.error("Could not load quote register.")
