@@ -1076,9 +1076,7 @@ with tab_update:
                     clean_money(item.get("Line Total", 0))
                     for item in invoice_items
                 )
-            
             else:
-            
                 subtotal = clean_money(
                     selected_record.get("Subtotal", 0)
                 )
@@ -1086,15 +1084,14 @@ with tab_update:
             gst = subtotal * 0.10
             total = subtotal + gst
 
+            ws["F10"] = invoice_number
+            ws["F11"] = datetime.today().strftime("%d/%m/%Y")
+            ws["F12"] = updated_po_number
 
-                ws["F10"] = invoice_number
-                ws["F11"] = datetime.today().strftime("%d/%m/%Y")
-                ws["F12"] = updated_po_number
-
-                ws["B17"] = str(selected_record.get("Customer", "")) + " - " + str(selected_record.get("Department", ""))
-                ws["D18"] = str(selected_record.get("Company", ""))
-                ws["D19"] = str(selected_record.get("Address", ""))
-                ws["D20"] = str(selected_record.get("City/State", ""))
+            ws["B17"] = str(selected_record.get("Customer", "")) + " - " + str(selected_record.get("Department", ""))
+            ws["D18"] = str(selected_record.get("Company", ""))
+            ws["D19"] = str(selected_record.get("Address", ""))
+            ws["D20"] = str(selected_record.get("City/State", ""))
 
             if invoice_items:
                 for index, item in enumerate(invoice_items):
