@@ -1286,9 +1286,7 @@ invoices@fortescue.com"""
                     clean_money(item.get("Line Total", 0))
                     for item in invoice_items
                 )
-            
             else:
-            
                 subtotal = clean_money(
                     selected_invoice_record.get("Subtotal", 0)
                 )
@@ -1296,14 +1294,14 @@ invoices@fortescue.com"""
             gst = subtotal * 0.10
             total = subtotal + gst
 
-                ws["F10"] = invoice_number
-                ws["F11"] = datetime.today().strftime("%d/%m/%Y")
-                ws["F12"] = po_number_for_invoice
+            ws["F10"] = invoice_number
+            ws["F11"] = datetime.today().strftime("%d/%m/%Y")
+            ws["F12"] = po_number_for_invoice
 
-                ws["B17"] = f"{invoice_customer} - {invoice_department}"
-                ws["D18"] = invoice_company
-                ws["D19"] = invoice_address
-                ws["D20"] = invoice_city_state
+            ws["B17"] = f"{invoice_customer} - {invoice_department}"
+            ws["D18"] = invoice_company
+            ws["D19"] = invoice_address
+            ws["D20"] = invoice_city_state
 
                 ws["I17"] = billing_address
 
