@@ -373,10 +373,13 @@ def get_quote_items(quote_number):
 
     matched_items = []
 
-    selected_quote_number = str(quote_number).strip()
+    selected_quote_number = str(quote_number).strip().replace(".0", "")
 
     for row in records:
-        sheet_quote_number = str(row.get("Quote Number", "")).strip()
+
+        sheet_quote_number = str(
+            row.get("Quote Number", "")
+        ).strip().replace(".0", "")
 
         if sheet_quote_number == selected_quote_number:
             matched_items.append(row)
@@ -1243,6 +1246,7 @@ invoices@fortescue.com"""
             )
 
             invoice_items = get_quote_items(invoice_quote_number)
+            st.write(invoice_items)
 
             st.subheader("Invoice Items")
 
