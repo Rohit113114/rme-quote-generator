@@ -1144,7 +1144,7 @@ with tab_update:
             
             st.subheader("Invoice Generation")
 
-            if st.button("Generate Invoice Excel"):
+            if st.button("Generate Invoice Excel", key="create_invoice_button"):
                 invoice_file, generated_invoice_number = create_invoice_excel(
                     selected_record
                 )
