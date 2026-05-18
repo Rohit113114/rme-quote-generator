@@ -603,7 +603,7 @@ with tab_dashboard:
 
             col1, col2, col3 = st.columns(3)
             col1.metric("Total Quotes", total_quotes)
-            col2.metric("Total Revenue", f"${total_revenue:,.2f}")
+            col2.metric("Gross Revenue", f"${total_revenue:,.2f}")
             col3.metric("Paid Jobs", paid_jobs)
 
             col4, col5, col6 = st.columns(3)
