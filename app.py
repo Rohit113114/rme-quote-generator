@@ -1065,15 +1065,13 @@ with tab_update:
 
             def create_invoice_excel(selected_record):
                 invoice_number = generate_invoice_number(
-                    selected_quote_number,
-                    selected_revision
+                    selected_record.get("Quote Number", "")
                 )
 
                 wb = load_workbook(INVOICE_TEMPLATE_FILE)
                 ws = wb.active
 
             if invoice_items:
-            
                 subtotal = sum(
                     clean_money(item.get("Line Total", 0))
                     for item in invoice_items
@@ -1082,7 +1080,7 @@ with tab_update:
             else:
             
                 subtotal = clean_money(
-                    selected_invoice_record.get("Subtotal", 0)
+                    selected_record.get("Subtotal", 0)
                 )
             
             gst = subtotal * 0.10
