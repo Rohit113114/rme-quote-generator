@@ -1198,16 +1198,15 @@ with tab_invoice:
 
             selected_invoice_quote = st.selectbox(
                 "Select Quote to Invoice",
-                register_df["Quote Display"].tolist(),
+                register_df["Quote Number"].astype(str).tolist(),
                 key="invoice_quote_select"
             )
 
             selected_invoice_record = register_df[
-                register_df["Quote Display"] == selected_invoice_quote
+                register_df["Quote Number"].astype(str) == selected_invoice_quote
             ].iloc[0]
 
             invoice_quote_number = str(selected_invoice_record.get("Quote Number", ""))
-            invoice_revision = str(selected_invoice_record.get("Revision", ""))
 
             invoice_number = generate_invoice_number(invoice_quote_number)
 
@@ -1253,7 +1252,7 @@ invoices@fortescue.com"""
                 value=str(selected_invoice_record.get("PO Number", ""))
             )
 
-            invoice_items = get_quote_items(invoice_quote_number, invoice_revision)
+            invoice_items = get_quote_items(invoice_quote_number)
 
             st.subheader("Invoice Items")
 
