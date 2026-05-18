@@ -1245,16 +1245,8 @@ invoices@fortescue.com"""
                 value=str(selected_invoice_record.get("PO Number", ""))
             )
 
-            st.write("Selected invoice quote number:", invoice_quote_number)
-
-            items_sheet = get_quote_items_sheet()
-            all_item_records = items_sheet.get_all_records()
-
-            st.write("All Quote Items records:", all_item_records)
-
             invoice_items = get_quote_items(invoice_quote_number)
 
-            st.write("Matched invoice items:", invoice_items)
 
             st.subheader("Invoice Items")
 
