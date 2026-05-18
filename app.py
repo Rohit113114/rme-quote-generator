@@ -1305,48 +1305,48 @@ invoices@fortescue.com"""
 
             ws["I17"] = billing_address
 
-                start_row = 27
+            start_row = 27
 
-                if invoice_items:
-                    for index, item in enumerate(invoice_items):
-                        row = start_row + index
+            if invoice_items:
+                for index, item in enumerate(invoice_items):
+                    row = start_row + index
 
-                        part_number = str(item.get("Part Number", ""))
-                        description = str(item.get("Description", ""))
+                    part_number = str(item.get("Part Number", ""))
+                    description = str(item.get("Description", ""))
 
-                        invoice_description = f"{part_number} - {description}".strip(" -")
+                    invoice_description = f"{part_number} - {description}".strip(" -")
 
-                        ws[f"B{row}"] = invoice_description
-                        ws[f"I{row}"] = clean_money(item.get("Qty", 0))
-                        ws[f"J{row}"] = clean_money(item.get("Unit Price", 0))
-                        ws[f"K{row}"] = clean_money(item.get("Line Total", 0))
+                    ws[f"B{row}"] = invoice_description
+                    ws[f"I{row}"] = clean_money(item.get("Qty", 0))
+                    ws[f"J{row}"] = clean_money(item.get("Unit Price", 0))
+                    ws[f"K{row}"] = clean_money(item.get("Line Total", 0))
                         
-                        ws[f"J{row}"].number_format = '$#,##0.00'
-                        ws[f"K{row}"].number_format = '$#,##0.00'
+                    ws[f"J{row}"].number_format = '$#,##0.00'
+                    ws[f"K{row}"].number_format = '$#,##0.00'
                         
-                        ws[f"B{row}"].alignment = Alignment(horizontal="left")
-                        ws[f"I{row}"].alignment = Alignment(horizontal="center")
-                        ws[f"J{row}"].alignment = Alignment(horizontal="right")
-                        ws[f"K{row}"].alignment = Alignment(horizontal="right")
+                    ws[f"B{row}"].alignment = Alignment(horizontal="left")
+                    ws[f"I{row}"].alignment = Alignment(horizontal="center")
+                    ws[f"J{row}"].alignment = Alignment(horizontal="right")
+                    ws[f"K{row}"].alignment = Alignment(horizontal="right")
 
-                else:
-                    ws["B27"] = f"Quotation {invoice_quote_number}"
-                    ws["I27"] = 1
-                    ws["J27"] = subtotal
-                    ws["K27"] = subtotal
+            else:
+                ws["B27"] = f"Quotation {invoice_quote_number}"
+                ws["I27"] = 1
+                ws["J27"] = subtotal
+                ws["K27"] = subtotal
 
-                ws["K36"] = subtotal
-                ws["K37"] = gst
-                ws["K38"] = total
+            ws["K36"] = subtotal
+            ws["K37"] = gst
+            ws["K38"] = total
 
-                for cell in ["J27", "K27", "K36", "K37", "K38"]:
+            for cell in ["J27", "K27", "K36", "K37", "K38"]:
                     ws[cell].number_format = '$#,##0.00'
 
-                excel_buffer = BytesIO()
-                wb.save(excel_buffer)
-                excel_buffer.seek(0)
+            excel_buffer = BytesIO()
+            wb.save(excel_buffer)
+            excel_buffer.seek(0)
 
-                return excel_buffer
+            return excel_buffer
 
             if st.button("Generate Invoice Excel"):
                 invoice_file = create_invoice_from_quote()
