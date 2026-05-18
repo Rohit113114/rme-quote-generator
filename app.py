@@ -1191,7 +1191,8 @@ with tab_invoice:
             )
 
             customer_match = customers_db[
-                customers_db["Contact Name"].astype(str) == invoice_customer
+                customers_db["Contact Name"].astype(str).str.strip().str.lower()
+                == invoice_customer.strip().lower()
             ]
 
             if not customer_match.empty:
