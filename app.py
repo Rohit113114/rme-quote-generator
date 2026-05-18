@@ -1279,9 +1279,9 @@ invoices@fortescue.com"""
                     for index, item in enumerate(invoice_items):
                         row = start_row + index
 
-                        part_number = clean_text(item.get("Part Number", ""))
-                        description = clean_text(item.get("Description", ""))
-
+                        part_number = str(item.get("Part Number", "")).strip()
+                        description = str(item.get("Description", "")).strip()
+                        
                         invoice_description = f"{part_number} - {description}".strip(" -")
 
                         ws[f"B{row}"] = invoice_description
