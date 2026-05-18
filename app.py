@@ -13,6 +13,7 @@ import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
 from openpyxl import load_workbook
+from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 from pyluach import dates
 from reportlab.lib import colors
@@ -937,7 +938,7 @@ with tab_create:
                     ]
 
                     try:
-                        append_register_row(history_row)
+                        append_register_row(history_row, quote_number, revision, items)
                         st.success("Quote generated and saved to Google Sheets.")
                     except Exception as exc:
                         st.warning("Quote generated, but Google Sheets save failed.")
@@ -1052,89 +1053,51 @@ with tab_update:
                 index=STATUS_OPTIONS.index(current_status)
             )
 
-            updated_po_number = st.text_input("Update PO Number", value=clean_text(selected_record.get("PO Number", "")))
-            updated_invoice_number = st.text_input("Update Invoice Number", value=clean_text(selected_record.get("Invoice Number", "")))
+            updated_po_number = st.text_input(
+                "Update PO Number",
+                value=clean_text(selected_record.get("PO Number", ""))
+            )
 
-            update_quote_released_date = st.text_input("Quote Released Date", value=clean_text(selected_record.get("Quote Released Date", "")))
-            update_po_received_date = st.text_input("PO Received Date", value=clean_text(selected_record.get("PO Received Date", "")))
-            update_item_delivered_date = st.text_input("Item Delivered Date", value=clean_text(selected_record.get("Item Delivered Date", "")))
-            update_invoice_sent_date = st.text_input("Invoice Sent Date", value=clean_text(selected_record.get("Invoice Sent Date", "")))
-            update_invoice_due_date = st.text_input("Invoice Due Date", value=clean_text(selected_record.get("Invoice Due Date", "")))
-            update_invoice_paid_date = st.text_input("Invoice Paid Date", value=clean_text(selected_record.get("Invoice Paid Date", "")))
-            update_job_completed_date = st.text_input("Job Completed Date", value=clean_text(selected_record.get("Job Completed Date", "")))
+            updated_invoice_number = st.text_input(
+                "Update Invoice Number",
+                value=clean_text(selected_record.get("Invoice Number", ""))
+            )
 
-            def create_invoice_excel(selected_record):
-                invoice_number = generate_invoice_number(
-                    selected_record.get("Quote Number", "")
-                )
+            update_quote_released_date = st.text_input(
+                "Quote Released Date",
+                value=clean_text(selected_record.get("Quote Released Date", ""))
+            )
 
-                wb = load_workbook(INVOICE_TEMPLATE_FILE)
-                ws = wb.active
+            update_po_received_date = st.text_input(
+                "PO Received Date",
+                value=clean_text(selected_record.get("PO Received Date", ""))
+            )
 
-            if invoice_items:
-                subtotal = sum(
-                    clean_money(item.get("Line Total", 0))
-                    for item in invoice_items
-                )
-            else:
-                subtotal = clean_money(
-                    selected_record.get("Subtotal", 0)
-                )
-            
-            gst = subtotal * 0.10
-            total = subtotal + gst
+            update_item_delivered_date = st.text_input(
+                "Item Delivered Date",
+                value=clean_text(selected_record.get("Item Delivered Date", ""))
+            )
 
-            ws["F10"] = invoice_number
-            ws["F11"] = datetime.today().strftime("%d/%m/%Y")
-            ws["F12"] = updated_po_number
+            update_invoice_sent_date = st.text_input(
+                "Invoice Sent Date",
+                value=clean_text(selected_record.get("Invoice Sent Date", ""))
+            )
 
-            ws["B17"] = str(selected_record.get("Customer", "")) + " - " + str(selected_record.get("Department", ""))
-            ws["D18"] = str(selected_record.get("Company", ""))
-            ws["D19"] = str(selected_record.get("Address", ""))
-            ws["D20"] = str(selected_record.get("City/State", ""))
+            update_invoice_due_date = st.text_input(
+                "Invoice Due Date",
+                value=clean_text(selected_record.get("Invoice Due Date", ""))
+            )
 
-            if invoice_items:
-                for index, item in enumerate(invoice_items):
-                    row = start_row + index
-            
-                    part_number = str(item.get("Part Number", ""))
-                    description = str(item.get("Description", ""))
-            
-                    invoice_description = f"{part_number} - {description}".strip(" -")
-            
-                    ws[f"B{row}"] = invoice_description
-                    ws[f"I{row}"] = clean_money(item.get("Qty", 0))
-                    ws[f"J{row}"] = clean_money(item.get("Unit Price", 0))
-                    ws[f"K{row}"] = clean_money(item.get("Line Total", 0))
-            
-                    ws[f"J{row}"].number_format = '$#,##0.00'
-                    ws[f"K{row}"].number_format = '$#,##0.00'
-            
-                    ws[f"B{row}"].alignment = Alignment(horizontal="left")
-                    ws[f"I{row}"].alignment = Alignment(horizontal="center")
-                    ws[f"J{row}"].alignment = Alignment(horizontal="right")
-                    ws[f"K{row}"].alignment = Alignment(horizontal="right")
-            
-            else:
-                ws["B27"] = f"Quotation {invoice_quote_number}"
-                ws["I27"] = 1
-                ws["J27"] = subtotal
-                ws["K27"] = subtotal
-            
-            # ALWAYS outside the if/else
-            ws["K36"] = subtotal
-            ws["K37"] = gst
-            ws["K38"] = total
-            
-            for cell in ["J27", "K27", "K36", "K37", "K38"]:
-                ws[cell].number_format = '$#,##0.00'
-            
-            excel_buffer = BytesIO()
-            wb.save(excel_buffer)
-            excel_buffer.seek(0)
-            
-            return excel_buffer, invoice_number
-                            
+            update_invoice_paid_date = st.text_input(
+                "Invoice Paid Date",
+                value=clean_text(selected_record.get("Invoice Paid Date", ""))
+            )
+
+            update_job_completed_date = st.text_input(
+                "Job Completed Date",
+                value=clean_text(selected_record.get("Job Completed Date", ""))
+            )
+
             if st.button("Update Quote Register"):
                 today_string = datetime.today().strftime("%d/%m/%Y")
 
@@ -1179,29 +1142,10 @@ with tab_update:
                     st.success("Quote register updated successfully.")
                 else:
                     st.error("Quote number/revision not found in register.")
-            
-            st.subheader("Invoice Generation")
-
-            if st.button("Generate Invoice Excel", key="create_invoice_button"):
-                invoice_file, generated_invoice_number = create_invoice_excel(
-                    selected_record
-                )
-
-                st.success(
-                    f"Invoice generated: {generated_invoice_number}"
-                )
-
-                st.download_button(
-                    label="Download Invoice Excel",
-                    data=invoice_file,
-                    file_name=f"RME_Invoice_{generated_invoice_number}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
 
     except Exception as exc:
         st.error("Could not load quote register.")
         st.error(exc)
-
 
 with tab_invoice:
     st.subheader("Create Invoice")
@@ -1211,14 +1155,7 @@ with tab_invoice:
 
         if register_df.empty:
             st.write("No quote records found.")
-
         else:
-            register_df["Quote Display"] = (
-                register_df["Quote Number"].astype(str)
-                + "-R"
-                + register_df["Revision"].astype(str)
-            )
-
             selected_invoice_quote = st.selectbox(
                 "Select Quote to Invoice",
                 register_df["Quote Number"].astype(str).tolist(),
@@ -1229,7 +1166,9 @@ with tab_invoice:
                 register_df["Quote Number"].astype(str) == selected_invoice_quote
             ].iloc[0]
 
-            invoice_quote_number = str(selected_invoice_record.get("Quote Number", ""))
+            invoice_quote_number = clean_text(
+                selected_invoice_record.get("Quote Number", "")
+            )
 
             invoice_number = generate_invoice_number(invoice_quote_number)
 
@@ -1237,9 +1176,17 @@ with tab_invoice:
 
             st.subheader("Customer Details")
 
-            invoice_customer = str(selected_invoice_record.get("Customer", ""))
-            invoice_department = str(selected_invoice_record.get("Department", ""))
-            invoice_company = str(selected_invoice_record.get("Company", ""))
+            invoice_customer = clean_text(
+                selected_invoice_record.get("Customer", "")
+            )
+
+            invoice_department = clean_text(
+                selected_invoice_record.get("Department", "")
+            )
+
+            invoice_company = clean_text(
+                selected_invoice_record.get("Company", "")
+            )
 
             customer_match = customers_db[
                 customers_db["Contact Name"].astype(str) == invoice_customer
@@ -1247,8 +1194,12 @@ with tab_invoice:
 
             if not customer_match.empty:
                 customer_invoice_row = customer_match.iloc[0]
-                invoice_address = str(customer_invoice_row.get("Address", ""))
-                invoice_city_state = str(customer_invoice_row.get("City/State", ""))
+                invoice_address = clean_text(
+                    customer_invoice_row.get("Address", "")
+                )
+                invoice_city_state = clean_text(
+                    customer_invoice_row.get("City/State", "")
+                )
             else:
                 invoice_address = ""
                 invoice_city_state = ""
@@ -1272,92 +1223,103 @@ invoices@fortescue.com"""
 
             po_number_for_invoice = st.text_input(
                 "Purchase Order Number",
-                value=str(selected_invoice_record.get("PO Number", ""))
+                value=clean_text(selected_invoice_record.get("PO Number", ""))
             )
 
             invoice_items = get_quote_items(invoice_quote_number)
-
 
             st.subheader("Invoice Items")
 
             if invoice_items:
                 st.dataframe(pd.DataFrame(invoice_items), use_container_width=True)
             else:
-                st.warning("No saved item lines found for this quote. A summary invoice line will be used.")
+                st.warning(
+                    "No saved item lines found for this quote. A summary invoice line will be used."
+                )
 
             def create_invoice_from_quote():
+                if not INVOICE_TEMPLATE_FILE.exists():
+                    raise FileNotFoundError(
+                        f"{INVOICE_TEMPLATE_FILE} was not found."
+                    )
+
                 wb = load_workbook(INVOICE_TEMPLATE_FILE)
                 ws = wb.active
 
-            if invoice_items:
-            
-                subtotal = sum(
-                    clean_money(item.get("Line Total", 0))
-                    for item in invoice_items
-                )
-            else:
-                subtotal = clean_money(
-                    selected_invoice_record.get("Subtotal", 0)
-                )
-            
-            gst = subtotal * 0.10
-            total = subtotal + gst
+                if invoice_items:
+                    subtotal = sum(
+                        clean_money(item.get("Line Total", 0))
+                        for item in invoice_items
+                    )
+                else:
+                    subtotal = clean_money(
+                        selected_invoice_record.get("Subtotal", 0)
+                    )
 
-            ws["F10"] = invoice_number
-            ws["F11"] = datetime.today().strftime("%d/%m/%Y")
-            ws["F12"] = po_number_for_invoice
+                gst = subtotal * 0.10
+                total = subtotal + gst
 
-            ws["B17"] = f"{invoice_customer} - {invoice_department}"
-            ws["D18"] = invoice_company
-            ws["D19"] = invoice_address
-            ws["D20"] = invoice_city_state
+                ws["F10"] = invoice_number
+                ws["F11"] = datetime.today().strftime("%d/%m/%Y")
+                ws["F12"] = po_number_for_invoice
 
-            ws["I17"] = billing_address
+                ws["B17"] = f"{invoice_customer} - {invoice_department}"
+                ws["D18"] = invoice_company
+                ws["D19"] = invoice_address
+                ws["D20"] = invoice_city_state
 
-            start_row = 27
+                ws["I17"] = billing_address
 
-            if invoice_items:
-                for index, item in enumerate(invoice_items):
-                    row = start_row + index
+                start_row = 27
 
-                    part_number = str(item.get("Part Number", ""))
-                    description = str(item.get("Description", ""))
+                if invoice_items:
+                    for index, item in enumerate(invoice_items):
+                        row = start_row + index
 
-                    invoice_description = f"{part_number} - {description}".strip(" -")
+                        part_number = clean_text(item.get("Part Number", ""))
+                        description = clean_text(item.get("Description", ""))
 
-                    ws[f"B{row}"] = invoice_description
-                    ws[f"I{row}"] = clean_money(item.get("Qty", 0))
-                    ws[f"J{row}"] = clean_money(item.get("Unit Price", 0))
-                    ws[f"K{row}"] = clean_money(item.get("Line Total", 0))
-                        
-                    ws[f"J{row}"].number_format = '$#,##0.00'
-                    ws[f"K{row}"].number_format = '$#,##0.00'
-                        
-                    ws[f"B{row}"].alignment = Alignment(horizontal="left")
-                    ws[f"I{row}"].alignment = Alignment(horizontal="center")
-                    ws[f"J{row}"].alignment = Alignment(horizontal="right")
-                    ws[f"K{row}"].alignment = Alignment(horizontal="right")
+                        invoice_description = f"{part_number} - {description}".strip(" -")
 
-            else:
-                ws["B27"] = f"Quotation {invoice_quote_number}"
-                ws["I27"] = 1
-                ws["J27"] = subtotal
-                ws["K27"] = subtotal
+                        ws[f"B{row}"] = invoice_description
+                        ws[f"I{row}"] = clean_money(item.get("Qty", 0))
+                        ws[f"J{row}"] = clean_money(item.get("Unit Price", 0))
+                        ws[f"K{row}"] = clean_money(item.get("Line Total", 0))
 
-            ws["K36"] = subtotal
-            ws["K37"] = gst
-            ws["K38"] = total
+                        ws[f"J{row}"].number_format = '$#,##0.00'
+                        ws[f"K{row}"].number_format = '$#,##0.00'
 
-            for cell in ["J27", "K27", "K36", "K37", "K38"]:
+                        ws[f"B{row}"].alignment = Alignment(horizontal="left")
+                        ws[f"I{row}"].alignment = Alignment(horizontal="center")
+                        ws[f"J{row}"].alignment = Alignment(horizontal="right")
+                        ws[f"K{row}"].alignment = Alignment(horizontal="right")
+                else:
+                    ws["B27"] = f"Quotation {invoice_quote_number}"
+                    ws["I27"] = 1
+                    ws["J27"] = subtotal
+                    ws["K27"] = subtotal
+                    ws["J27"].number_format = '$#,##0.00'
+                    ws["K27"].number_format = '$#,##0.00'
+                    ws["B27"].alignment = Alignment(horizontal="left")
+                    ws["I27"].alignment = Alignment(horizontal="center")
+                    ws["J27"].alignment = Alignment(horizontal="right")
+                    ws["K27"].alignment = Alignment(horizontal="right")
+
+                ws["K36"] = subtotal
+                ws["K37"] = gst
+                ws["K38"] = total
+
+                for cell in ["K36", "K37", "K38"]:
                     ws[cell].number_format = '$#,##0.00'
+                    ws[cell].alignment = Alignment(horizontal="right")
 
-            excel_buffer = BytesIO()
-            wb.save(excel_buffer)
-            excel_buffer.seek(0)
+                excel_buffer = BytesIO()
+                wb.save(excel_buffer)
+                excel_buffer.seek(0)
 
-            return excel_buffer
+                return excel_buffer.getvalue()
 
-            if st.button("Generate Invoice Excel"):
+            if st.button("Generate Invoice Excel", key="generate_invoice_excel_button"):
                 invoice_file = create_invoice_from_quote()
 
                 st.success(f"Invoice generated: {invoice_number}")
