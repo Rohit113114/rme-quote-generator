@@ -146,7 +146,7 @@ def clean_text(value):
     return "" if is_blank(value) else str(value).strip()
 
 def generate_invoice_number(quote_number):
-    return f"INV{quote_number}"
+    return f"INV-{quote_number}"
     
 def clean_money(value):
     if is_blank(value):
@@ -218,7 +218,7 @@ def generate_next_quote_number(register_df=None):
                 sequence = int(match.group(1) or "1")
                 next_sequence = max(next_sequence, sequence + 1)
 
-    return f"{prefix}-{next_sequence:03d}"
+    return prefix
 
 
 def run_with_google_retries(action_name, operation):
@@ -791,7 +791,7 @@ with tab_create:
         quote_number = st.text_input("Quote Number", value=auto_quote_number)
         revision = st.text_input("Revision", "0")
 
-        quote_reference = f"{clean_text(quote_number)}-R{clean_text(revision)}"
+        quote_reference = clean_text(quote_number)
         st.info(f"Quote Reference: {quote_reference}")
 
         st.subheader("Internal Workflow Tracking")
