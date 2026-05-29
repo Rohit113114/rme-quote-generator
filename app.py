@@ -29,6 +29,11 @@ def check_login():
     USERNAME = "admin"
     PASSWORD = st.secrets["auth"]["password"]
 
+    query_params = st.query_params
+
+    if query_params.get("login") == "true":
+        st.session_state["logged_in"] = True
+
     if "logged_in" not in st.session_state:
         st.session_state["logged_in"] = False
 
@@ -43,6 +48,7 @@ def check_login():
     if st.button("Login"):
         if username == USERNAME and password == PASSWORD:
             st.session_state["logged_in"] = True
+            st.query_params["login"] = "true"
             st.rerun()
         else:
             st.error("Invalid username or password")
@@ -50,15 +56,12 @@ def check_login():
     return False
 
 
-if not check_login():
-    st.stop()
-
-
 col1, col2 = st.columns([9, 1])
 
 with col2:
     if st.button("Logout"):
         st.session_state["logged_in"] = False
+        st.query_params.clear()
         st.rerun()
 
 
