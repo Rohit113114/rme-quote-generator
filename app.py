@@ -309,7 +309,7 @@ def get_register_dataframe():
         record = dict(zip(headers, padded_row[:len(headers)]))
 
         if any(clean_text(value) for value in record.values()):
-            records.append(record)
+            records.(record)
 
     register_df = pd.DataFrame(records) if records else pd.DataFrame(columns=headers)
 
@@ -940,7 +940,7 @@ with tab_create:
                     ]
 
                     try:
-                        append_register_row(history_row, quote_number, revision, items)
+                        append_register_row(history_row)
                         st.success("Quote generated and saved to Google Sheets.")
                     except Exception as exc:
                         st.warning("Quote generated, but Google Sheets save failed.")
