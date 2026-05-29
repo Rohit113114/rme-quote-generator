@@ -309,7 +309,7 @@ def get_register_dataframe():
         record = dict(zip(headers, padded_row[:len(headers)]))
 
         if any(clean_text(value) for value in record.values()):
-            records.(record)
+            records.append(record)
 
     register_df = pd.DataFrame(records) if records else pd.DataFrame(columns=headers)
 
