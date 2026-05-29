@@ -782,14 +782,12 @@ with tab_dashboard:
             dashboard_df["Paid Blank"] = dashboard_df["Invoice Paid Date"].apply(is_blank)
 
             total_quotes = len(dashboard_df)
-            total_revenue = dashboard_df["Total"].sum()
-
-            paid_jobs = len(
-                dashboard_df[
-                    dashboard_df["Job Status"].isin(["Paid", "Completed", "Closed"])
-                    | (~dashboard_df["Paid Blank"])
-                ]
-            )
+            paid_df = dashboard_df[
+                dashboard_df["Job Status"].isin(["Paid", "Completed", "Closed"])
+            ]
+            
+            total_revenue = paid_df["Total"].sum()
+            paid_jobs = len(paid_df)
 
             po_received = len(dashboard_df[dashboard_df["Job Status"] == "PO Received"])
             invoice_sent = len(dashboard_df[dashboard_df["Job Status"] == "Invoice Sent"])
