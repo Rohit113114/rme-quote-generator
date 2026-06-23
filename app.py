@@ -2,6 +2,7 @@ import re
 import smtplib
 import time
 import random
+import plotly.express as px
 from datetime import datetime, date
 from io import BytesIO
 from pathlib import Path
@@ -912,36 +913,72 @@ with tab_dashboard:
                 errors="coerce"
             ).fillna(0)
             
-            st.subheader("Revenue by Job Status")
             
-            revenue_by_status = (
-                dashboard_df.groupby("Job Status")["Total"]
-                .sum()
-                .reset_index()
-                .sort_values(by="Total", ascending=False)
-            )
+            st.subheader("Dashboard Charts")
             
-            st.bar_chart(
-                revenue_by_status,
-                x="Job Status",
-                y="Total",
-            )
+            chart_col1, chart_col2 = st.columns(2)
             
-            st.subheader("Quotes by Job Status")
+            with chart_col1:
+                revenue_by_status = (
+                    dashboard_df.groupby("Job Status")["Total"]
+                    .sum()
+                    .reset_index()
+                    .sort_values(by="Total", ascending=False)
+                )
             
-            quotes_by_status = (
-                dashboard_df["Job Status"]
-                .value_counts()
-                .reset_index()
-            )
+                fig_revenue = px.bar(
+                    revenue_by_status,
+                    x="Total",
+                    y="Job Status",
+                    orientation="h",
+                    title="Revenue by Job Status",
+                    text="Total",
+                )
             
-            quotes_by_status.columns = ["Job Status", "Count"]
+                fig_revenue.update_traces(
+                    texttemplate="$%{text:,.0f}",
+                    textposition="outside",
+                )
             
-            st.bar_chart(
-                quotes_by_status,
-                x="Job Status",
-                y="Count",
-            )
+                fig_revenue.update_layout(
+                    height=380,
+                    xaxis_title="Revenue",
+                    yaxis_title="",
+                    showlegend=False,
+                )
+            
+                st.plotly_chart(fig_revenue, use_container_width=True)
+            
+            with chart_col2:
+                quotes_by_status = (
+                    dashboard_df["Job Status"]
+                    .value_counts()
+                    .reset_index()
+                )
+            
+                quotes_by_status.columns = ["Job Status", "Count"]
+            
+                fig_quotes = px.bar(
+                    quotes_by_status,
+                    x="Count",
+                    y="Job Status",
+                    orientation="h",
+                    title="Quotes by Job Status",
+                    text="Count",
+                )
+            
+                fig_quotes.update_traces(
+                    textposition="outside",
+                )
+            
+                fig_quotes.update_layout(
+                    height=380,
+                    xaxis_title="Number of Quotes",
+                    yaxis_title="",
+                    showlegend=False,
+                )
+            
+                st.plotly_chart(fig_quotes, use_container_width=True)
             
             st.subheader("Monthly Revenue")
             
@@ -953,7 +990,7 @@ with tab_dashboard:
             
             monthly_revenue["Month"] = pd.to_datetime(
                 monthly_revenue["Created Date Parsed"]
-            ).dt.to_period("M")
+            ).dt.to_period("M").astype(str)
             
             monthly_revenue = (
                 monthly_revenue.groupby("Month")["Total"]
@@ -961,13 +998,22 @@ with tab_dashboard:
                 .reset_index()
             )
             
-            monthly_revenue["Month"] = monthly_revenue["Month"].astype(str)
-            
-            st.line_chart(
+            fig_monthly = px.line(
                 monthly_revenue,
                 x="Month",
                 y="Total",
+                markers=True,
+                title="Monthly Revenue Trend",
             )
+            
+            fig_monthly.update_layout(
+                height=380,
+                xaxis_title="Month",
+                yaxis_title="Revenue",
+                showlegend=False,
+            )
+            
+            st.plotly_chart(fig_monthly, use_container_width=True)
             
             st.subheader("Quote Search")
 
