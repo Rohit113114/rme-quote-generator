@@ -634,13 +634,13 @@ def create_excel_quote(
         worksheet[f"C{row}"] = item["description"]
         worksheet[f"K{row}"] = item["qty"]
         worksheet[f"L{row}"] = item["unit_price"]
-        worksheet[f"M{row}"] = item["total"]
+        worksheet[f"M{row}"] = f"=K{row}*L{row}"
         worksheet[f"L{row}"].number_format = "$#,##0.00"
         worksheet[f"M{row}"].number_format = "$#,##0.00"
 
-    worksheet["L38"] = subtotal
-    worksheet["L39"] = gst
-    worksheet["L40"] = grand_total
+    worksheet["L38"] = "=SUM(M26:M35)"
+    worksheet["L39"] = "=L38*10%"
+    worksheet["L40"] = "=L38+L39"
 
     for cell in ("L38", "L39", "L40"):
         worksheet[cell].number_format = "$#,##0.00"
