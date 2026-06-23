@@ -12,6 +12,8 @@ import gspread
 import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
@@ -113,6 +115,7 @@ QUOTE_TEMPLATE_FILE = Path("rme_excel_template.xlsx")
 INVOICE_TEMPLATE_FILE = Path("invoice_template.xlsx")
 
 GOOGLE_SHEET_NAME = "RME Quote Register"
+GOOGLE_DRIVE_QUOTE_FOLDER = "RME Generated Quotes"
 MAX_ITEM_ROWS = 12
 MAX_RETRIES = 5
 MAXIMUM_BACKOFF = 32
@@ -137,6 +140,8 @@ REGISTER_HEADERS = [
     "Subtotal",
     "GST",
     "Total",
+    "Quote Excel Link",
+    "Quote PDF Link",
 ]
 
 STATUS_OPTIONS = [
@@ -302,6 +307,97 @@ def get_google_client():
     )
 
     return gspread.authorize(credentials)
+
+
+@st.cache_resource(show_spinner=False)
+def get_drive_service():
+    if "gcp_service_account" not in st.secrets:
+        raise RuntimeError("Google service account settings are missing from Streamlit Secrets.")
+
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+
+    credentials = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=scopes,
+    )
+
+    return build("drive", "v3", credentials=credentials)
+
+
+def make_drive_file_viewable(file_id):
+    drive_service = get_drive_service()
+
+    try:
+        drive_service.permissions().create(
+            fileId=file_id,
+            body={"type": "anyone", "role": "reader"},
+            fields="id",
+        ).execute()
+    except Exception:
+        pass
+
+
+def get_or_create_drive_folder(folder_name):
+    drive_service = get_drive_service()
+
+    safe_folder_name = folder_name.replace("'", "\\'")
+    query = (
+        f"name = '{safe_folder_name}' "
+        "and mimeType = 'application/vnd.google-apps.folder' "
+        "and trashed = false"
+    )
+
+    response = drive_service.files().list(
+        q=query,
+        spaces="drive",
+        fields="files(id, name)",
+    ).execute()
+
+    folders = response.get("files", [])
+
+    if folders:
+        return folders[0]["id"]
+
+    folder_metadata = {
+        "name": folder_name,
+        "mimeType": "application/vnd.google-apps.folder",
+    }
+
+    folder = drive_service.files().create(
+        body=folder_metadata,
+        fields="id",
+    ).execute()
+
+    make_drive_file_viewable(folder["id"])
+    return folder["id"]
+
+
+def upload_file_to_drive(file_bytes, filename, mime_type, folder_id):
+    drive_service = get_drive_service()
+
+    file_metadata = {
+        "name": filename,
+        "parents": [folder_id],
+    }
+
+    media = MediaIoBaseUpload(
+        BytesIO(file_bytes),
+        mimetype=mime_type,
+        resumable=False,
+    )
+
+    uploaded_file = drive_service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id, webViewLink",
+    ).execute()
+
+    make_drive_file_viewable(uploaded_file["id"])
+
+    return uploaded_file.get("webViewLink", "")
 
 
 def connect_google_sheet():
@@ -638,12 +734,15 @@ def create_excel_quote(
         worksheet[f"L{row}"].number_format = "$#,##0.00"
         worksheet[f"M{row}"].number_format = "$#,##0.00"
 
-    worksheet["L38"] = "=SUM(M26:M35)"
+    worksheet["L38"] = "=SUM(M26:M37)"
     worksheet["L39"] = "=L38*10%"
     worksheet["L40"] = "=L38+L39"
 
     for cell in ("L38", "L39", "L40"):
         worksheet[cell].number_format = "$#,##0.00"
+
+    workbook.calculation.fullCalcOnLoad = True
+    workbook.calculation.forceFullCalc = True
 
     excel_buffer = BytesIO()
     workbook.save(excel_buffer)
@@ -1023,6 +1122,31 @@ with tab_create:
                         grand_total,
                     )
 
+                    excel_filename = f"RME_Quote_{quote_reference}.xlsx"
+                    pdf_filename = f"RME_Quote_{quote_reference}.pdf"
+                    excel_drive_link = ""
+                    pdf_drive_link = ""
+
+                    try:
+                        quote_folder_id = get_or_create_drive_folder(GOOGLE_DRIVE_QUOTE_FOLDER)
+
+                        excel_drive_link = upload_file_to_drive(
+                            excel_bytes,
+                            excel_filename,
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            quote_folder_id,
+                        )
+
+                        pdf_drive_link = upload_file_to_drive(
+                            pdf_bytes,
+                            pdf_filename,
+                            "application/pdf",
+                            quote_folder_id,
+                        )
+                    except Exception as exc:
+                        st.warning("Quote generated, but Google Drive upload failed.")
+                        st.error(exc)
+
                     history_row = [
                         clean_text(quote_number),
                         clean_text(revision),
@@ -1043,6 +1167,8 @@ with tab_create:
                         subtotal,
                         gst,
                         grand_total,
+                        excel_drive_link,
+                        pdf_drive_link,
                     ]
 
                     try:
@@ -1059,8 +1185,10 @@ with tab_create:
                         "quote_reference": quote_reference,
                         "excel_bytes": excel_bytes,
                         "pdf_bytes": pdf_bytes,
-                        "excel_filename": f"RME_Quote_{quote_reference}.xlsx",
-                        "pdf_filename": f"RME_Quote_{quote_reference}.pdf",
+                        "excel_filename": excel_filename,
+                        "pdf_filename": pdf_filename,
+                        "excel_drive_link": excel_drive_link,
+                        "pdf_drive_link": pdf_drive_link,
                         "customer_email": customer_email,
                         "generation_token": generation_token,
                     }
@@ -1089,6 +1217,12 @@ with tab_create:
                 mime="application/pdf",
                 key=f"pdf_download_{generated_quote['generation_token']}",
             )
+
+            if generated_quote.get("excel_drive_link"):
+                st.markdown(f"[Open Quote Excel in Google Drive]({generated_quote['excel_drive_link']})")
+
+            if generated_quote.get("pdf_drive_link"):
+                st.markdown(f"[Open Quote PDF in Google Drive]({generated_quote['pdf_drive_link']})")
 
             st.subheader("Email Quote")
 
@@ -1361,6 +1495,9 @@ invoices@fortescue.com""",
                 start_row = 27
 
                 if invoice_items:
+                    if len(invoice_items) > 9:
+                        raise ValueError("Invoice template supports only 9 item rows before totals.")
+
                     for index, item in enumerate(invoice_items):
                         row = start_row + index
 
@@ -1381,7 +1518,7 @@ invoices@fortescue.com""",
                         ws[f"B{row}"] = invoice_description
                         ws[f"I{row}"] = clean_money(item.get("Qty", 0))
                         ws[f"J{row}"] = clean_money(item.get("Unit Price", 0))
-                        ws[f"K{row}"] = clean_money(item.get("Line Total", 0))
+                        ws[f"K{row}"] = f"=I{row}*J{row}"
 
                         ws[f"J{row}"].number_format = "$#,##0.00"
                         ws[f"K{row}"].number_format = "$#,##0.00"
@@ -1394,7 +1531,7 @@ invoices@fortescue.com""",
                     ws["B27"] = f"Quotation {invoice_quote_number}"
                     ws["I27"] = 1
                     ws["J27"] = subtotal
-                    ws["K27"] = subtotal
+                    ws["K27"] = "=I27*J27"
                     ws["J27"].number_format = "$#,##0.00"
                     ws["K27"].number_format = "$#,##0.00"
                     ws["B27"].alignment = Alignment(horizontal="left")
@@ -1402,13 +1539,16 @@ invoices@fortescue.com""",
                     ws["J27"].alignment = Alignment(horizontal="right")
                     ws["K27"].alignment = Alignment(horizontal="right")
 
-                ws["K36"] = subtotal
-                ws["K37"] = gst
-                ws["K38"] = total
+                ws["K36"] = "=SUM(K27:K35)"
+                ws["K37"] = "=K36*10%"
+                ws["K38"] = "=K36+K37"
 
                 for cell in ["K36", "K37", "K38"]:
                     ws[cell].number_format = "$#,##0.00"
                     ws[cell].alignment = Alignment(horizontal="right")
+
+                wb.calculation.fullCalcOnLoad = True
+                wb.calculation.forceFullCalc = True
 
                 excel_buffer = BytesIO()
                 wb.save(excel_buffer)
