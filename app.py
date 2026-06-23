@@ -1185,10 +1185,8 @@ with tab_create:
                         "quote_reference": quote_reference,
                         "excel_bytes": excel_bytes,
                         "pdf_bytes": pdf_bytes,
-                        "excel_filename": excel_filename,
-                        "pdf_filename": pdf_filename,
-                        "excel_drive_link": excel_drive_link,
-                        "pdf_drive_link": pdf_drive_link,
+                        "excel_filename": f"RME_Quote_{quote_reference}.xlsx",
+                        "pdf_filename": f"RME_Quote_{quote_reference}.pdf",
                         "customer_email": customer_email,
                         "generation_token": generation_token,
                     }
