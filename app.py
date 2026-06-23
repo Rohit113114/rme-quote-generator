@@ -907,6 +907,8 @@ with tab_dashboard:
             col4.metric("PO Received", po_received)
             col5.metric("Invoices Sent", invoice_sent)
             col6.metric("Overdue Invoices", len(overdue_df))
+
+            st.divider()
             
             dashboard_df["Total"] = pd.to_numeric(
                 dashboard_df["Total"],
