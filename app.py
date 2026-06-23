@@ -980,7 +980,7 @@ with tab_dashboard:
             
                 st.plotly_chart(fig_quotes, use_container_width=True)
             
-             st.subheader("Monthly Completed Revenue")
+            st.subheader("Monthly Completed Revenue")
             
             completed_revenue_df = dashboard_df[
                 dashboard_df["Job Status"].isin(["Paid", "Completed", "Closed"])
