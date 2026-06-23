@@ -934,6 +934,8 @@ with tab_dashboard:
                     ["Paid", "Completed", "Closed"]
                 )
             ]["Total"].sum()
+
+            st.markdown("<br>", unsafe_allow_html=True)
             
             col7, col8, col9, col10 = st.columns(4)
             
