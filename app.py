@@ -998,19 +998,25 @@ with tab_dashboard:
                 .reset_index()
             )
             
-            fig_monthly = px.line(
+            fig_monthly = px.bar(
                 monthly_revenue,
                 x="Month",
                 y="Total",
-                markers=True,
-                title="Monthly Revenue Trend",
+                text="Total",
+                title="Monthly Revenue",
+            )
+            
+            fig_monthly.update_traces(
+                texttemplate="$%{text:,.0f}",
+                textposition="outside",
             )
             
             fig_monthly.update_layout(
-                height=380,
+                height=350,
                 xaxis_title="Month",
                 yaxis_title="Revenue",
                 showlegend=False,
+                margin=dict(l=20, r=20, t=50, b=20),
             )
             
             st.plotly_chart(fig_monthly, use_container_width=True)
