@@ -980,7 +980,7 @@ with tab_dashboard:
             
                 st.plotly_chart(fig_quotes, use_container_width=True)
             
-            st.subheader("Monthly Revenue")
+             st.subheader("Monthly Completed Revenue")
             
             completed_revenue_df = dashboard_df[
                 dashboard_df["Job Status"].isin(["Paid", "Completed", "Closed"])
@@ -988,45 +988,66 @@ with tab_dashboard:
             
             completed_revenue_df["Created Date Parsed"] = completed_revenue_df["Created Date"].apply(parse_date)
             
-            monthly_revenue = completed_revenue_df.dropna(
+            completed_revenue_df = completed_revenue_df.dropna(
                 subset=["Created Date Parsed"]
             ).copy()
             
-            monthly_revenue["Month Date"] = pd.to_datetime(
-                monthly_revenue["Created Date Parsed"]
+            completed_revenue_df["Month Date"] = pd.to_datetime(
+                completed_revenue_df["Created Date Parsed"]
             ).dt.to_period("M").dt.to_timestamp()
             
             monthly_revenue = (
-                monthly_revenue.groupby("Month Date")["Total"]
+                completed_revenue_df.groupby("Month Date")["Total"]
                 .sum()
                 .reset_index()
                 .sort_values("Month Date")
             )
             
-            monthly_revenue["Month"] = monthly_revenue["Month Date"].dt.strftime("%b")
+            if not monthly_revenue.empty:
+                full_months = pd.date_range(
+                    start=monthly_revenue["Month Date"].min(),
+                    end=monthly_revenue["Month Date"].max(),
+                    freq="MS",
+                )
             
-            fig_monthly = px.bar(
-                monthly_revenue,
-                x="Month",
-                y="Total",
-                text="Total",
-                title="Monthly Completed Revenue",
-            )
+                monthly_revenue = (
+                    monthly_revenue.set_index("Month Date")
+                    .reindex(full_months, fill_value=0)
+                    .rename_axis("Month Date")
+                    .reset_index()
+                )
             
-            fig_monthly.update_traces(
-                texttemplate="$%{text:,.0f}",
-                textposition="outside",
-            )
+                monthly_revenue["Month"] = monthly_revenue["Month Date"].dt.strftime("%b")
             
-            fig_monthly.update_layout(
-                height=350,
-                xaxis_title="Month",
-                yaxis_title="Completed Revenue",
-                showlegend=False,
-                margin=dict(l=20, r=20, t=50, b=20),
-            )
+                fig_monthly = px.bar(
+                    monthly_revenue,
+                    x="Month",
+                    y="Total",
+                    text="Total",
+                    title="Monthly Completed Revenue",
+                )
             
-            st.plotly_chart(fig_monthly, use_container_width=True)
+                fig_monthly.update_traces(
+                    texttemplate="$%{text:,.0f}",
+                    textposition="outside",
+                    width=0.35,
+                )
+            
+                fig_monthly.update_layout(
+                    height=330,
+                    bargap=0.55,
+                    xaxis_title="",
+                    yaxis_title="Completed Revenue",
+                    showlegend=False,
+                    margin=dict(l=20, r=20, t=45, b=20),
+                )
+            
+                chart_left, chart_middle, chart_right = st.columns([1, 2, 1])
+            
+                with chart_middle:
+                    st.plotly_chart(fig_monthly, use_container_width=True)
+            else:
+                st.info("No completed revenue available yet.")
             
             st.subheader("Quote Search")
 
