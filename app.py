@@ -927,23 +927,34 @@ with tab_dashboard:
                 ]
             )
             
-            avg_quote_value = dashboard_df["Total"].mean()
+            pipeline_value = dashboard_df["Total"].sum()
             
-            col7, col8, col9 = st.columns(3)
+            open_pipeline = dashboard_df[
+                ~dashboard_df["Job Status"].isin(
+                    ["Paid", "Completed", "Closed"]
+                )
+            ]["Total"].sum()
+            
+            col7, col8, col9, col10 = st.columns(4)
             
             col7.metric(
-                "Conversion Rate",
+                "Win Rate",
                 f"{conversion_rate}%"
             )
             
             col8.metric(
-                "Average Quote Value",
-                f"${avg_quote_value:,.0f}"
+                "Pipeline Value",
+                f"${pipeline_value:,.0f}"
             )
             
             col9.metric(
                 "Open Jobs",
                 open_jobs
+            )
+            
+            col10.metric(
+                "Open Pipeline",
+                f"${open_pipeline:,.0f}"
             )
             
             
@@ -964,7 +975,7 @@ with tab_dashboard:
                     x="Total",
                     y="Job Status",
                     orientation="h",
-                    title="Revenue by Job Status",
+                    title="Quoted Value by Status",
                     text="Total",
                 )
             
