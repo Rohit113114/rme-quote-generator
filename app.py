@@ -906,7 +906,69 @@ with tab_dashboard:
             col4.metric("PO Received", po_received)
             col5.metric("Invoices Sent", invoice_sent)
             col6.metric("Overdue Invoices", len(overdue_df))
-
+            
+            dashboard_df["Total"] = pd.to_numeric(
+                dashboard_df["Total"],
+                errors="coerce"
+            ).fillna(0)
+            
+            st.subheader("Revenue by Job Status")
+            
+            revenue_by_status = (
+                dashboard_df.groupby("Job Status")["Total"]
+                .sum()
+                .reset_index()
+                .sort_values(by="Total", ascending=False)
+            )
+            
+            st.bar_chart(
+                revenue_by_status,
+                x="Job Status",
+                y="Total",
+            )
+            
+            st.subheader("Quotes by Job Status")
+            
+            quotes_by_status = (
+                dashboard_df["Job Status"]
+                .value_counts()
+                .reset_index()
+            )
+            
+            quotes_by_status.columns = ["Job Status", "Count"]
+            
+            st.bar_chart(
+                quotes_by_status,
+                x="Job Status",
+                y="Count",
+            )
+            
+            st.subheader("Monthly Revenue")
+            
+            dashboard_df["Created Date Parsed"] = dashboard_df["Created Date"].apply(parse_date)
+            
+            monthly_revenue = dashboard_df.dropna(
+                subset=["Created Date Parsed"]
+            ).copy()
+            
+            monthly_revenue["Month"] = pd.to_datetime(
+                monthly_revenue["Created Date Parsed"]
+            ).dt.to_period("M")
+            
+            monthly_revenue = (
+                monthly_revenue.groupby("Month")["Total"]
+                .sum()
+                .reset_index()
+            )
+            
+            monthly_revenue["Month"] = monthly_revenue["Month"].astype(str)
+            
+            st.line_chart(
+                monthly_revenue,
+                x="Month",
+                y="Total",
+            )
+            
             st.subheader("Quote Search")
 
             search_quote = st.text_input("Search Quote Number")
