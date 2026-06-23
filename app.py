@@ -982,28 +982,35 @@ with tab_dashboard:
             
             st.subheader("Monthly Revenue")
             
-            dashboard_df["Created Date Parsed"] = dashboard_df["Created Date"].apply(parse_date)
+            completed_revenue_df = dashboard_df[
+                dashboard_df["Job Status"].isin(["Paid", "Completed", "Closed"])
+            ].copy()
             
-            monthly_revenue = dashboard_df.dropna(
+            completed_revenue_df["Created Date Parsed"] = completed_revenue_df["Created Date"].apply(parse_date)
+            
+            monthly_revenue = completed_revenue_df.dropna(
                 subset=["Created Date Parsed"]
             ).copy()
             
-            monthly_revenue["Month"] = pd.to_datetime(
+            monthly_revenue["Month Date"] = pd.to_datetime(
                 monthly_revenue["Created Date Parsed"]
-            ).dt.to_period("M").astype(str)
+            ).dt.to_period("M").dt.to_timestamp()
             
             monthly_revenue = (
-                monthly_revenue.groupby("Month")["Total"]
+                monthly_revenue.groupby("Month Date")["Total"]
                 .sum()
                 .reset_index()
+                .sort_values("Month Date")
             )
+            
+            monthly_revenue["Month"] = monthly_revenue["Month Date"].dt.strftime("%b")
             
             fig_monthly = px.bar(
                 monthly_revenue,
                 x="Month",
                 y="Total",
                 text="Total",
-                title="Monthly Revenue",
+                title="Monthly Completed Revenue",
             )
             
             fig_monthly.update_traces(
@@ -1014,7 +1021,7 @@ with tab_dashboard:
             fig_monthly.update_layout(
                 height=350,
                 xaxis_title="Month",
-                yaxis_title="Revenue",
+                yaxis_title="Completed Revenue",
                 showlegend=False,
                 margin=dict(l=20, r=20, t=50, b=20),
             )
