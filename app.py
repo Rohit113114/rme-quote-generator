@@ -960,6 +960,7 @@ with tab_dashboard:
             )
             
             
+            st.divider()
             st.subheader("Dashboard Charts")
             
             chart_col1, chart_col2 = st.columns(2)
