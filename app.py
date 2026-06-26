@@ -735,9 +735,9 @@ def create_excel_quote(
         worksheet[f"L{row}"].number_format = "$#,##0.00"
         worksheet[f"M{row}"].number_format = "$#,##0.00"
 
-    worksheet["L38"] = "=SUM(M26:M37)"
-    worksheet["L39"] = "=L38*10%"
-    worksheet["L40"] = "=L38+L39"
+    worksheet["L38"] = subtotal
+    worksheet["L39"] = 10% GST
+    worksheet["L40"] = Total including GST
 
     for cell in ("L38", "L39", "L40"):
         worksheet[cell].number_format = "$#,##0.00"
@@ -1659,9 +1659,9 @@ invoices@fortescue.com""",
                     ws["J27"].alignment = Alignment(horizontal="right")
                     ws["K27"].alignment = Alignment(horizontal="right")
 
-                ws["K36"] = "=SUM(K27:K35)"
-                ws["K37"] = "=K36*10%"
-                ws["K38"] = "=K36+K37"
+                ws["K36"] = subtotal
+                ws["K37"] = gst
+                ws["K38"] = total
 
                 for cell in ["K36", "K37", "K38"]:
                     ws[cell].number_format = "$#,##0.00"
