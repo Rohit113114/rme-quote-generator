@@ -736,8 +736,8 @@ def create_excel_quote(
         worksheet[f"M{row}"].number_format = "$#,##0.00"
 
     worksheet["L38"] = subtotal
-    worksheet["L39"] = 10% GST
-    worksheet["L40"] = Total including GST
+    worksheet["L39"] = gst
+    worksheet["L40"] = grand_total
 
     for cell in ("L38", "L39", "L40"):
         worksheet[cell].number_format = "$#,##0.00"
